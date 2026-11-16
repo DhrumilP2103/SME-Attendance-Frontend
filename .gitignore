@@ -1,0 +1,32 @@
+# Dependencies and generated output
+node_modules/
+.next/
+out/
+dist/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+next-env.d.ts
+
+# Local configuration, data, and credentials
+.env
+.env.*
+!.env.example
+.local/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+
+# Local tooling and temporary files
+.qoder/
+.idea/
+.vscode/
+.DS_Store
+*.log
+*.bak
+*.tmp
+*.swp
+/tests/

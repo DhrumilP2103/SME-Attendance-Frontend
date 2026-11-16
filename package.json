@@ -1,0 +1,44 @@
+{
+  "name": "sme-attendance-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "11.0.1"
+    }
+  },
+  "dependencies": {
+    "@hookform/resolvers": "5.9.2",
+    "@radix-ui/react-dialog": "1.3.1",
+    "@tanstack/react-query": "5.107.1",
+    "lucide-react": "0.468.0",
+    "luxon": "3.7.2",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-hook-form": "7.92.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.5",
+    "@types/luxon": "3.7.6",
+    "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.4.6",
+    "prettier": "3.6.2",
+    "tailwindcss": "4.3.5",
+    "typescript": "5.9.3"
+  }
+}

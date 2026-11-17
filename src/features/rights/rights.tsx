@@ -110,11 +110,13 @@ export default function Rights() {
               <thead>
                 <tr>
                   <th>Permission</th>
-                  {policies.data?.data.map((policy) => (
-                    <th key={policy.role} style={{ textAlign: "center" }}>
-                      {label(policy.role)}
-                    </th>
-                  ))}
+                  {policies.data?.data
+                    .filter((p) => (p.role as string) !== "CUSTOMER")
+                    .map((policy) => (
+                      <th key={policy.role} style={{ textAlign: "center" }}>
+                        {label(policy.role)}
+                      </th>
+                    ))}
                 </tr>
               </thead>
               <tbody>
@@ -131,8 +133,10 @@ export default function Rights() {
                         {description}
                       </small>
                     </td>
-                    {policies.data?.data.map((policy) => (
-                      <td key={policy.role} style={{ textAlign: "center" }}>
+                    {policies.data?.data
+                      .filter((p) => (p.role as string) !== "CUSTOMER")
+                      .map((policy) => (
+                        <td key={policy.role} style={{ textAlign: "center" }}>
                         {policy.configurable.includes(key) ? (
                           <input
                             type="checkbox"
@@ -397,7 +401,6 @@ export default function Rights() {
                 <select name="role" defaultValue="EMPLOYEE">
                   <option value="EMPLOYEE">Employee</option>
                   <option value="HR">HR Manager</option>
-                  <option value="CUSTOMER">Customer / Client</option>
                   <option value="ADMIN">Administrator</option>
                 </select>
               </Field>

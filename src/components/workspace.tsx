@@ -103,9 +103,7 @@ export default function Workspace() {
       href: "/payroll",
       name: "Payroll",
       icon: Wallet,
-      allowed:
-        user.role !== "CUSTOMER" &&
-        (!!user.employeeId || p.canViewSalaryImpact),
+      allowed: !!user.employeeId || p.canViewSalaryImpact,
     },
     {
       href: "/reports",

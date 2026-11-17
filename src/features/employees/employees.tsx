@@ -274,9 +274,6 @@ function EmployeeForm({
     [error, setError] = useState("");
   const client = useQueryClient(),
     toast = useToast();
-  const customers = useData<{ _id: string; name: string }[]>(
-    "/employees/customers",
-  );
   const canPay = user.effectivePermissions.canViewSalaryImpact;
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -292,9 +289,7 @@ function EmployeeForm({
         department: value("department"),
         designation: value("designation"),
         profilePhotoUrl: value("profilePhotoUrl"),
-        assignedClientOrCustomer: customers.data
-          ? value("customer") || null
-          : employee?.assignedClientOrCustomer || null,
+        assignedClientOrCustomer: null,
         shift: {
           startTime: value("startTime"),
           endTime: value("endTime"),
@@ -422,20 +417,6 @@ function EmployeeForm({
                 maxLength={120}
                 placeholder="e.g. Software Engineer"
               />
-            </Field>
-            <Field label="Assigned customer">
-              <select
-                name="customer"
-                disabled={customers.isPending || !!customers.error}
-                defaultValue={employee?.assignedClientOrCustomer || ""}
-              >
-                <option value="">No assignment</option>
-                {customers.data?.data.map((c) => (
-                  <option key={c._id} value={c._id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
             </Field>
             <Field label="Profile photo URL">
               <input

@@ -293,7 +293,6 @@ export default function AuthPage({ mode }: { mode: string }) {
                 <option value="ADMIN">Administrator workspace</option>
                 <option value="HR">HR workspace</option>
                 <option value="EMPLOYEE">Employee workspace</option>
-                <option value="CUSTOMER">Client workspace</option>
               </select>
               <Button variant="secondary" busy={busy} onClick={demo}>
                 Explore local demo <ArrowRight size={15} />

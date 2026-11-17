@@ -213,9 +213,8 @@ export function AttendanceTable({
   showDate?: boolean;
 }) {
   const pay =
-    user.role !== "CUSTOMER" &&
-    (user.effectivePermissions.canViewSalaryImpact ||
-      rows.some((r) => r.employeeId === user.employeeId));
+    user.effectivePermissions.canViewSalaryImpact ||
+    rows.some((r) => r.employeeId === user.employeeId);
   return (
     <div className="table-wrap">
       <table className="table-mobile">

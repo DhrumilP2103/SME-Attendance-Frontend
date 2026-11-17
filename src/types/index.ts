@@ -1,4 +1,4 @@
-export type Role = "ADMIN" | "HR" | "EMPLOYEE" | "CUSTOMER";
+export type Role = "ADMIN" | "HR" | "EMPLOYEE";
 export type Permission =
   | "canLogin"
   | "canTakeSelfAttendance"

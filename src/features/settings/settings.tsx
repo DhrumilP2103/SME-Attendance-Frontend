@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Save, Send, Mail, Clock3, ShieldCheck, LogOut } from "lucide-react";
@@ -14,6 +14,7 @@ import {
   Loading,
   Notice,
   PageHeading,
+  Select,
 } from "@/components/ui";
 import { api, mutate, clearSessionToken } from "@/lib/api";
 import { label } from "@/lib/format";
@@ -75,11 +76,19 @@ function CompanySettings({ user }: { user: AuthUser }) {
               label="Currency"
               hint="Currency is locked after employee compensation records exist."
             >
-              <select name="currency" defaultValue={user.company.currency}>
-                {["INR", "USD", "EUR", "GBP", "AED", "JPY"].map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
+              <Select
+                name="currency"
+                ariaLabel="Currency"
+                defaultValue={user.company.currency}
+                options={[
+                  { value: "INR", label: "INR", hint: "Indian Rupee" },
+                  { value: "USD", label: "USD", hint: "US Dollar" },
+                  { value: "EUR", label: "EUR", hint: "Euro" },
+                  { value: "GBP", label: "GBP", hint: "British Pound" },
+                  { value: "AED", label: "AED", hint: "UAE Dirham" },
+                  { value: "JPY", label: "JPY", hint: "Japanese Yen" },
+                ]}
+              />
             </Field>
             <Button busy={busy}>
               <Save size={15} />
@@ -113,6 +122,51 @@ function EodSettings() {
     return <ErrorState error={query.error} retry={() => query.refetch()} />;
   return <EodForm config={query.data.data} />;
 }
+const fallbackTimezones = [
+  "Asia/Kolkata",
+  "UTC",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "Europe/London",
+  "Europe/Paris",
+  "Europe/Berlin",
+  "Asia/Dubai",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+];
+function timezoneGroups(current: string) {
+  const supported =
+    typeof Intl.supportedValuesOf === "function"
+      ? Intl.supportedValuesOf("timeZone")
+      : fallbackTimezones;
+  const zones = [...new Set([...supported, current])].sort();
+  const groups = new Map<string, { value: string; label: string }[]>();
+  for (const zone of zones) {
+    let offset = "";
+    try {
+      offset =
+        new Intl.DateTimeFormat("en", {
+          timeZone: zone,
+          timeZoneName: "shortOffset",
+        })
+          .formatToParts()
+          .find((part) => part.type === "timeZoneName")?.value ?? "";
+    } catch {
+      offset = "";
+    }
+    const region = zone.includes("/") ? zone.split("/")[0] : "Universal";
+    const list = groups.get(region) ?? [];
+    list.push({
+      value: zone,
+      label: offset ? `${zone.replace(/_/g, " ")} (${offset})` : zone,
+    });
+    groups.set(region, list);
+  }
+  return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
 function EodForm({ config }: { config: EodConfig }) {
   const [enabled, setEnabled] = useState(config.isEnabled),
     [busy, setBusy] = useState(false),
@@ -125,6 +179,7 @@ function EodForm({ config }: { config: EodConfig }) {
     refetchInterval: 5000,
     retry: false,
   });
+  const zones = useMemo(() => timezoneGroups(config.timezone), [config.timezone]);
   return (
     <>
       <PageHeading
@@ -177,9 +232,7 @@ function EodForm({ config }: { config: EodConfig }) {
                     .map((s) => s.trim())
                     .filter(Boolean),
                   sections: Object.fromEntries(
-                    ["summary", "absent", "incomplete", "overtime"].map(
-                      (key) => [key, form.has(key)],
-                    ),
+                    ["attendance", "salary"].map((key) => [key, form.has(key)]),
                   ),
                 });
                 await client.invalidateQueries();
@@ -213,20 +266,23 @@ function EodForm({ config }: { config: EodConfig }) {
                   required
                 />
               </Field>
-              <Field label="Business timezone">
-                <input
+              <Field
+                label="Business timezone"
+                hint="Attendance days and report schedules follow this timezone."
+              >
+                <Select
                   name="timezone"
+                  ariaLabel="Business timezone"
                   defaultValue={config.timezone}
-                  list="timezones"
-                  required
+                  searchPlaceholder="Search timezones…"
+                  options={zones.map(([region, list]) => ({
+                    group: region,
+                    options: list.map((zone) => ({
+                      value: zone.value,
+                      label: zone.label,
+                    })),
+                  }))}
                 />
-                <datalist id="timezones">
-                  <option value="Asia/Kolkata" />
-                  <option value="UTC" />
-                  <option value="America/New_York" />
-                  <option value="Europe/London" />
-                  <option value="Asia/Dubai" />
-                </datalist>
               </Field>
             </div>
             <Field
@@ -245,11 +301,17 @@ function EodForm({ config }: { config: EodConfig }) {
             </h3>
             <div className="stack" style={{ gap: 10 }}>
               {[
-                ["summary", "Executive summary"],
-                ["absent", "Absences and unmarked employees"],
-                ["incomplete", "Incomplete check-outs"],
-                ["overtime", "Overtime register"],
-              ].map(([key, name]) => (
+                [
+                  "attendance",
+                  "Attendance Report",
+                  "Daily status, hours and overtime for every employee.",
+                ],
+                [
+                  "salary",
+                  "Salary Report",
+                  "Month-to-date salary estimate for active employees.",
+                ],
+              ].map(([key, name, hint]) => (
                 <label className="check-label" key={key}>
                   <input
                     name={key}
@@ -258,7 +320,12 @@ function EodForm({ config }: { config: EodConfig }) {
                       config.sections[key as keyof EodConfig["sections"]]
                     }
                   />
-                  {name}
+                  <span>
+                    {name}
+                    <small className="block text-[10px] text-[#8c958e]">
+                      {hint}
+                    </small>
+                  </span>
                 </label>
               ))}
             </div>
@@ -275,10 +342,10 @@ function EodForm({ config }: { config: EodConfig }) {
             </span>
             <h2 style={{ marginTop: 16 }}>A little peace of mind</h2>
             <p>
-              Every report includes a CSV attachment. Recipients see the same
-              attendance data and totals as your workspace.
+              Each selected report arrives with its own CSV attachment.
+              Recipients see the same data and totals as your workspace.
             </p>
-            <div className="flex" style={{ fontSize: 11, color: "#809086" }}>
+            <div className="row" style={{ fontSize: 11, color: "#809086" }}>
               <Clock3 size={15} />
               Your timezone. Your schedule.
             </div>
@@ -301,7 +368,7 @@ function EodForm({ config }: { config: EodConfig }) {
               <div className="panel-body">
                 {runs.data.data.map((run) => (
                   <div className="audit-item" key={run._id}>
-                    <div className="flex space-between">
+                    <div className="row space-between">
                       <strong>{run.workDate}</strong>
                       <Badge status={run.status} />
                     </div>

@@ -14,7 +14,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { Logo, Button, Field, Avatar } from "@/components/ui";
+import { Logo, Button, Field, Avatar, Select } from "@/components/ui";
 import { useData } from "@/app/providers";
 import { mutate, clearSessionToken } from "@/lib/api";
 
@@ -28,6 +28,8 @@ export default function AuthPage({ mode }: { mode: string }) {
     client = useQueryClient();
   const options = useData<{ demoAvailable: boolean }>("/auth/options");
   const [show, setShow] = useState(false),
+    [showNew, setShowNew] = useState(false),
+    [showConfirm, setShowConfirm] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [message, setMessage] = useState(""),
@@ -88,7 +90,7 @@ export default function AuthPage({ mode }: { mode: string }) {
             <Sparkles size={12} /> A little less admin. A lot more clarity.
           </span>
           <h1 style={{ marginTop: 24 }}>
-            Your people.
+            Employees.
             <br />
             Your progress.
             <br />
@@ -99,7 +101,7 @@ export default function AuthPage({ mode }: { mode: string }) {
             your team, and everything in between.
           </p>
           <div className="auth-illustration">
-            <div className="flex">
+            <div className="row">
               <Avatar name="Your Team" />
               <div>
                 <strong style={{ fontSize: 13 }}>
@@ -115,7 +117,7 @@ export default function AuthPage({ mode }: { mode: string }) {
               <span style={{ width: "85%" }} />
             </div>
             <div
-              className="flex"
+              className="row"
               style={{
                 justifyContent: "space-between",
                 marginTop: 12,
@@ -250,24 +252,46 @@ export default function AuthPage({ mode }: { mode: string }) {
               ) : (
                 <>
                   <Field label="New password" hint="At least 12 characters.">
-                    <input
-                      name="password"
-                      type="password"
-                      minLength={12}
-                      maxLength={128}
-                      autoComplete="new-password"
-                      required
-                    />
+                    <div className="password-input">
+                      <input
+                        name="password"
+                        type={showNew ? "text" : "password"}
+                        minLength={12}
+                        maxLength={128}
+                        autoComplete="new-password"
+                        required
+                      />
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label={showNew ? "Hide password" : "Show password"}
+                        onClick={() => setShowNew(!showNew)}
+                      >
+                        {showNew ? <EyeOff size={17} /> : <Eye size={17} />}
+                      </button>
+                    </div>
                   </Field>
                   <Field label="Confirm password">
-                    <input
-                      name="confirm"
-                      type="password"
-                      minLength={12}
-                      maxLength={128}
-                      autoComplete="new-password"
-                      required
-                    />
+                    <div className="password-input">
+                      <input
+                        name="confirm"
+                        type={showConfirm ? "text" : "password"}
+                        minLength={12}
+                        maxLength={128}
+                        autoComplete="new-password"
+                        required
+                      />
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label={
+                          showConfirm ? "Hide password" : "Show password"
+                        }
+                        onClick={() => setShowConfirm(!showConfirm)}
+                      >
+                        {showConfirm ? <EyeOff size={17} /> : <Eye size={17} />}
+                      </button>
+                    </div>
                   </Field>
                 </>
               )}
@@ -284,16 +308,18 @@ export default function AuthPage({ mode }: { mode: string }) {
           )}
           {isLogin && options.data?.data.demoAvailable && (
             <div className="auth-demo">
-              <select
-                aria-label="Demo role"
+              <Select
+                compact
+                ariaLabel="Demo role"
                 className="demo-select"
                 value={role}
-                onChange={(e) => setRole(e.target.value)}
-              >
-                <option value="ADMIN">Administrator workspace</option>
-                <option value="HR">HR workspace</option>
-                <option value="EMPLOYEE">Employee workspace</option>
-              </select>
+                onChange={setRole}
+                options={[
+                  { value: "ADMIN", label: "Administrator workspace" },
+                  { value: "HR", label: "HR workspace" },
+                  { value: "EMPLOYEE", label: "Employee workspace" },
+                ]}
+              />
               <Button variant="secondary" busy={busy} onClick={demo}>
                 Explore local demo <ArrowRight size={15} />
               </Button>

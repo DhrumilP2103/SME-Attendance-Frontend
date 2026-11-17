@@ -16,6 +16,9 @@ import {
   Mail,
   ShieldCheck,
   TrendingUp,
+  LogIn,
+  LogOut,
+  Timer,
 } from "lucide-react";
 import { useData, useToast } from "@/app/providers";
 import {
@@ -39,6 +42,92 @@ export default function Dashboard({ user }: { user: AuthUser }) {
     return <ErrorState error={query.error} retry={() => query.refetch()} />;
   const d = query.data.data,
     p = user.effectivePermissions;
+  const isEmployee = user.role === "EMPLOYEE";
+  const myRow = d.recent[0];
+  const myStatus = d.present
+    ? "Present"
+    : d.absent
+      ? "Absent"
+      : d.halfDay
+        ? "Half Day"
+        : d.leave
+          ? "On Leave"
+          : d.holiday
+            ? "Holiday"
+            : d.unmarked
+              ? "Not Marked"
+              : "No record";
+  const stats = isEmployee
+    ? [
+        {
+          name: "My status today",
+          value: myStatus,
+          icon: UserCheck,
+          color: "",
+          hint: dateLabel(d.date, { weekday: "long" }),
+          tag: "",
+        },
+        {
+          name: "Check-in today",
+          value: time(myRow?.inTime ?? null, user.company.timezone),
+          icon: LogIn,
+          color: "blue",
+          hint: "Recorded check-in",
+          tag: "",
+        },
+        {
+          name: "Check-out today",
+          value: time(myRow?.outTime ?? null, user.company.timezone),
+          icon: LogOut,
+          color: "orange",
+          hint: "Recorded check-out",
+          tag: "",
+        },
+        {
+          name: "Hours today",
+          value: `${d.totalHours}h`,
+          icon: Timer,
+          color: "purple",
+          hint: "Regular hours recorded",
+          tag: "",
+        },
+      ]
+    : [
+        {
+          name: "Total employees",
+          value: d.headcount,
+          icon: Users,
+          color: "",
+          hint: "Active in your workspace",
+          tag: "Your team",
+        },
+        {
+          name: "Present today",
+          value: d.present,
+          icon: UserCheck,
+          color: "blue",
+          hint: "of today’s attendance",
+          tag: `${d.attendanceRate}%`,
+        },
+        {
+          name: "Absent today",
+          value: d.absent,
+          icon: UserX,
+          color: "orange",
+          hint: `${d.leave} on leave · ${d.unmarked} unmarked`,
+          tag: "",
+        },
+        {
+          name: "Overtime today",
+          value: d.overtime,
+          icon: Clock3,
+          color: "purple",
+          hint: p.canViewSalaryImpact
+            ? `${money(d.otAmount, user.company.currency)} in approved OT`
+            : "Extra efforts, recognized",
+          tag: "",
+        },
+      ];
   const max = Math.max(5, ...d.trend.map((t) => t.total));
   const parts = [
     { name: "Present", count: d.present, color: "#368163" },
@@ -108,42 +197,7 @@ export default function Dashboard({ user }: { user: AuthUser }) {
         </div>
       </div>
       <div className="stats-grid">
-        {[
-          {
-            name: "Total employees",
-            value: d.headcount,
-            icon: Users,
-            color: "",
-            hint: "Active in your workspace",
-            tag: "Your team",
-          },
-          {
-            name: "Present today",
-            value: d.present,
-            icon: UserCheck,
-            color: "blue",
-            hint: "of today’s attendance",
-            tag: `${d.attendanceRate}%`,
-          },
-          {
-            name: "Absent today",
-            value: d.absent,
-            icon: UserX,
-            color: "orange",
-            hint: `${d.leave} on leave · ${d.unmarked} unmarked`,
-            tag: "",
-          },
-          {
-            name: "Overtime today",
-            value: d.overtime,
-            icon: Clock3,
-            color: "purple",
-            hint: p.canViewSalaryImpact
-              ? `${money(d.otAmount, user.company.currency)} in approved OT`
-              : "Extra efforts, recognized",
-            tag: "",
-          },
-        ].map((stat) => (
+        {stats.map((stat) => (
           <div className="stat-card" key={stat.name}>
             <div className="stat-top">
               <span>{stat.name}</span>
@@ -151,7 +205,11 @@ export default function Dashboard({ user }: { user: AuthUser }) {
                 <stat.icon size={17} />
               </span>
             </div>
-            <h3>{String(stat.value).padStart(2, "0")}</h3>
+            <h3>
+              {typeof stat.value === "number"
+                ? String(stat.value).padStart(2, "0")
+                : stat.value}
+            </h3>
             <div className="stat-bottom">
               {stat.tag && <strong>{stat.tag}</strong>}
               <span>{stat.hint}</span>
@@ -163,8 +221,12 @@ export default function Dashboard({ user }: { user: AuthUser }) {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h2>Attendance overview</h2>
-              <p>A pulse on your team’s week</p>
+              <h2>{isEmployee ? "My attendance" : "Attendance overview"}</h2>
+              <p>
+                {isEmployee
+                  ? "Your last 7 days"
+                  : "A pulse on your team’s week"}
+              </p>
             </div>
             <div className="chart-legend">
               <span>
@@ -237,7 +299,7 @@ export default function Dashboard({ user }: { user: AuthUser }) {
             >
               <div className="donut-center">
                 <strong>{d.total}</strong>
-                <span>Employees</span>
+                <span>{isEmployee ? "Records" : "Employees"}</span>
               </div>
             </div>
             <div className="donut-legend">
@@ -260,8 +322,12 @@ export default function Dashboard({ user }: { user: AuthUser }) {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h2>Recent check-ins</h2>
-              <p>Your team, showing up and getting started</p>
+              <h2>{isEmployee ? "My check-ins" : "Recent check-ins"}</h2>
+              <p>
+                {isEmployee
+                  ? "Today’s recorded check-ins"
+                  : "Your team, showing up and getting started"}
+              </p>
             </div>
             <Link
               className="section-link"
@@ -276,7 +342,6 @@ export default function Dashboard({ user }: { user: AuthUser }) {
                 <thead>
                   <tr>
                     <th>Employee</th>
-                    <th>Department</th>
                     <th>Check-in</th>
                     <th>Status</th>
                   </tr>
@@ -293,7 +358,6 @@ export default function Dashboard({ user }: { user: AuthUser }) {
                           </div>
                         </div>
                       </td>
-                      <td data-label="Department">{row.department}</td>
                       <td data-label="Check-in" className="mono">
                         {time(row.inTime, user.company.timezone)}
                       </td>
@@ -307,43 +371,16 @@ export default function Dashboard({ user }: { user: AuthUser }) {
             </div>
           ) : (
             <Empty
-              title="A fresh start"
-              description="Check-ins will appear here as the workday begins."
+              title={isEmployee ? "No check-in yet" : "A fresh start"}
+              description={
+                isEmployee
+                  ? "Your check-in will appear here once it is recorded."
+                  : "Check-ins will appear here as the workday begins."
+              }
             />
           )}
         </section>
         <div className="stack">
-          <section className="panel">
-            <div className="panel-header">
-              <h2>Department attendance</h2>
-              <Users size={15} className="muted" />
-            </div>
-            <div className="department-list">
-              {d.departments.slice(0, 4).map((dept, index) => (
-                <div className="department-row" key={dept.name}>
-                  <div>
-                    <span>{dept.name}</span>
-                    <small>
-                      {dept.present} / {dept.total}
-                    </small>
-                  </div>
-                  <div className="progress-track">
-                    <span
-                      style={{
-                        width: `${(dept.present / Math.max(1, dept.total)) * 100}%`,
-                        background: [
-                          "#79a98b",
-                          "#a7baa0",
-                          "#dfc390",
-                          "#93b4ba",
-                        ][index],
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
           <section className="panel">
             <div className="panel-header">
               <h2>Make things happen</h2>

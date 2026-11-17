@@ -47,7 +47,6 @@ export interface Envelope<T> {
     limit: number;
     total: number;
     summary?: Summary;
-    departments?: string[];
   };
 }
 export interface AttendanceRow {
@@ -56,8 +55,6 @@ export interface AttendanceRow {
   employeeName: string;
   employeeCode: string;
   email: string;
-  department: string;
-  designation: string;
   workDate: string;
   status: string;
   inTime: string | null;
@@ -80,8 +77,7 @@ export interface Employee {
   email: string;
   phone: string;
   joiningDate: string;
-  department: string;
-  designation: string;
+  accountRole?: Role;
   payType: "SALARIED" | "HOURLY";
   baseSalary?: number;
   hourlyRate?: number;
@@ -104,14 +100,12 @@ export interface DashboardData extends Summary {
   headcount: number;
   attendanceRate: number;
   trend: (Summary & { date: string; label: string })[];
-  departments: { name: string; total: number; present: number }[];
   recent: AttendanceRow[];
 }
 export interface PayRow {
   employeeId: string;
   employeeName: string;
   employeeCode: string;
-  department: string;
   payType: string;
   month: string;
   currency: string;
@@ -148,10 +142,8 @@ export interface EodConfig {
   timezone: string;
   adminRecipients: string[];
   sections: {
-    summary: boolean;
-    absent: boolean;
-    incomplete: boolean;
-    overtime: boolean;
+    attendance: boolean;
+    salary: boolean;
   };
   emailDelivery: string;
 }

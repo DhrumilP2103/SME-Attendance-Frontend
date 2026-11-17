@@ -21,6 +21,7 @@ import {
   Notice,
   PageHeading,
   Pagination,
+  Select,
 } from "@/components/ui";
 import { mutate } from "@/lib/api";
 import { label } from "@/lib/format";
@@ -74,10 +75,10 @@ export default function Rights() {
         title="Access, with intention"
         description="The right permissions for the right people."
       >
-        <Button onClick={() => setInvite(true)}>
+        {/* <Button onClick={() => setInvite(true)}>
           <UserPlus size={15} />
           Invite account
-        </Button>
+        </Button> */}
       </PageHeading>
       <Notice>
         <ShieldCheck size={15} style={{ display: "inline" }} /> Fixed
@@ -265,20 +266,18 @@ export default function Rights() {
                     <h3>{descriptions[key][0]}</h3>
                     <p>{descriptions[key][1]}</p>
                   </div>
-                  <select
-                    aria-label={descriptions[key][0]}
-                    style={{ width: 113, fontSize: 11 }}
+                  <Select
+                    compact
+                    ariaLabel={descriptions[key][0]}
+                    style={{ width: 113 }}
                     disabled={busy}
                     value={
-                      selected.customPermissions[key] === undefined
+                      selected.customPermissions?.[key] === undefined
                         ? "inherit"
                         : String(selected.customPermissions[key])
                     }
-                    onChange={async (e) => {
-                      const value =
-                        e.target.value === "inherit"
-                          ? null
-                          : e.target.value === "true";
+                    onChange={async (v) => {
+                      const value = v === "inherit" ? null : v === "true";
                       if (
                         key === "canLogin" &&
                         value === false &&
@@ -294,7 +293,7 @@ export default function Rights() {
                           "PATCH",
                           { permissions: { [key]: value } },
                         );
-                        const next = { ...selected.customPermissions };
+                        const next = { ...(selected.customPermissions ?? {}) };
                         if (value === null) delete next[key];
                         else next[key] = value;
                         setSelected({ ...selected, customPermissions: next });
@@ -306,11 +305,12 @@ export default function Rights() {
                         setBusy(false);
                       }
                     }}
-                  >
-                    <option value="inherit">Inherit</option>
-                    <option value="true">Allow</option>
-                    <option value="false">Deny</option>
-                  </select>
+                    options={[
+                      { value: "inherit", label: "Inherit" },
+                      { value: "true", label: "Allow" },
+                      { value: "false", label: "Deny" },
+                    ]}
+                  />
                 </div>
               ))}
             <div
@@ -398,11 +398,16 @@ export default function Rights() {
                 <input name="email" type="email" required />
               </Field>
               <Field label="Role">
-                <select name="role" defaultValue="EMPLOYEE">
-                  <option value="EMPLOYEE">Employee</option>
-                  <option value="HR">HR Manager</option>
-                  <option value="ADMIN">Administrator</option>
-                </select>
+                <Select
+                  name="role"
+                  ariaLabel="Role"
+                  defaultValue="EMPLOYEE"
+                  options={[
+                    { value: "EMPLOYEE", label: "Employee" },
+                    { value: "HR", label: "HR Manager" },
+                    { value: "ADMIN", label: "Administrator" },
+                  ]}
+                />
               </Field>
               <small>
                 Employee accounts also need a linked employee profile before

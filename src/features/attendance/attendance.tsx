@@ -27,6 +27,7 @@ import {
   PageHeading,
   Pagination,
   SearchInput,
+  Select,
 } from "@/components/ui";
 import {
   dateNow,
@@ -143,29 +144,27 @@ export default function Attendance({
               setPage(1);
             }}
           />
-          <select
-            aria-label="Filter attendance status"
+          <Select
+            compact
+            ariaLabel="Filter attendance status"
             value={status}
-            onChange={(e) => {
-              setStatus(e.target.value);
+            onChange={(v) => {
+              setStatus(v);
               setPage(1);
             }}
-          >
-            <option value="">All statuses</option>
-            {[
-              "PRESENT",
-              "ABSENT",
-              "HALF_DAY",
-              "LEAVE",
-              "HOLIDAY",
-              "INCOMPLETE",
-              "UNMARKED",
-            ].map((s) => (
-              <option value={s} key={s}>
-                {label(s)}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: "", label: "All statuses" },
+              ...[
+                "PRESENT",
+                "ABSENT",
+                "HALF_DAY",
+                "LEAVE",
+                "HOLIDAY",
+                "INCOMPLETE",
+                "UNMARKED",
+              ].map((s) => ({ value: s, label: label(s) })),
+            ]}
+          />
           <span className="toolbar-spacer" />
           <small>{user.company.timezone}</small>
         </div>
@@ -238,9 +237,7 @@ export function AttendanceTable({
                   <Avatar name={row.employeeName} index={index} />
                   <div>
                     <strong>{row.employeeName}</strong>
-                    <small>
-                      {row.employeeCode} · {row.department}
-                    </small>
+                    <small>{row.employeeCode}</small>
                   </div>
                 </div>
               </td>
@@ -376,15 +373,18 @@ function AttendanceEditor({
       <form onSubmit={submit}>
         <div className="form-body">
           <Field label="Attendance status">
-            <select value={status} onChange={(e) => setStatus(e.target.value)}>
-              {["PRESENT", "ABSENT", "HALF_DAY", "LEAVE", "HOLIDAY"].map(
-                (s) => (
-                  <option key={s} value={s}>
-                    {label(s)}
-                  </option>
-                ),
-              )}
-            </select>
+            <Select
+              ariaLabel="Attendance status"
+              value={status}
+              onChange={setStatus}
+              options={[
+                "PRESENT",
+                "ABSENT",
+                "HALF_DAY",
+                "LEAVE",
+                "HOLIDAY",
+              ].map((s) => ({ value: s, label: label(s) }))}
+            />
           </Field>
           {working && (
             <div className="form-grid" style={{ marginTop: 18 }}>
@@ -586,7 +586,7 @@ function PunchCard({ user }: { user: AuthUser }) {
   }
   return (
     <section className="panel punch-card">
-      <div className="flex" style={{ justifyContent: "center" }}>
+      <div className="row" style={{ justifyContent: "center" }}>
         <Clock3 size={17} className="green" />
         <h2>Your workday</h2>
       </div>

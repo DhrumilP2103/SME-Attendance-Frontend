@@ -22,11 +22,14 @@ import {
   PageHeading,
   Pagination,
   SearchInput,
+  Select,
 } from "@/components/ui";
 import { AttendanceTable } from "@/features/attendance/attendance";
 import { download, queryString } from "@/lib/api";
 import { dateNow, money } from "@/lib/format";
 import type { AttendanceRow, AuthUser, PayRow } from "@/types";
+
+type EmployeeOption = { _id: string; fullName: string; employeeCode: string };
 
 export default function Reports({
   user,
@@ -41,28 +44,59 @@ export default function Reports({
     [month, setMonth] = useState(today.slice(0, 7)),
     [page, setPage] = useState(1),
     [search, setSearch] = useState(""),
+    [employeeId, setEmployeeId] = useState(""),
     [format, setFormat] = useState("csv"),
+    [reportType, setReportType] = useState("attendance"),
     [exporting, setExporting] = useState(false),
     [selected, setSelected] = useState<PayRow | null>(null);
   const toast = useToast();
-  const filters = queryString({ from, to, page, search, limit: 10 });
+  const canFilterEmployee =
+    !payroll && user.effectivePermissions.canGenerateReports;
+  const salaryMode = payroll || reportType === "salary";
+  const canSalaryReport =
+    !!user.employeeId || user.effectivePermissions.canViewSalaryImpact;
+  const people = useData<EmployeeOption[]>(
+    `/employees?${queryString({ limit: 100 })}`,
+    canFilterEmployee,
+  );
+  const filters = queryString({
+    from,
+    to,
+    page,
+    search,
+    employeeId,
+    limit: 10,
+  });
   const reports = useData<AttendanceRow[]>(
     `/reports/attendance?${filters}`,
-    !payroll,
+    !salaryMode,
   );
   const pay = useData<PayRow[]>(
-    `/payroll/monthly?${queryString({ month, page, limit: 10 })}`,
-    payroll,
+    `/payroll/monthly?${queryString({
+      month,
+      page,
+      limit: 10,
+      ...(payroll ? {} : { search, employeeId }),
+    })}`,
+    salaryMode,
   );
-  const query = payroll ? pay : reports;
+  const query = salaryMode ? pay : reports;
   const summary = reports.data?.meta?.summary;
   async function exportFile() {
     setExporting(true);
     try {
-      await download(
-        `/reports/attendance/export?${filters}&format=${format}`,
-        `Attendance_${from}_${to}.${format}`,
-      );
+      const chosen = people.data?.data.find((p) => p._id === employeeId);
+      if (salaryMode) {
+        await download(
+          `/reports/payroll/export?${queryString({ month, search, employeeId, format })}`,
+          `Salary_${chosen ? `${chosen.employeeCode}_` : ""}${month}.${format}`,
+        );
+      } else {
+        await download(
+          `/reports/attendance/export?${filters}&format=${format}`,
+          `Attendance_${chosen ? `${chosen.employeeCode}_` : ""}${from}_${to}.${format}`,
+        );
+      }
       toast("Your report is ready.");
     } catch (e) {
       toast((e as Error).message, true);
@@ -75,7 +109,7 @@ export default function Reports({
       <PageHeading
         title={payroll ? "Payroll overview" : "A clearer picture"}
         description={
-          payroll
+          salaryMode
             ? "The hours, effort, and earnings behind every month."
             : "Useful insights. Thoughtful decisions. Less guesswork."
         }
@@ -84,16 +118,18 @@ export default function Reports({
           user.effectivePermissions.canExportReports &&
           user.effectivePermissions.canGenerateReports && (
             <>
-              <select
-                aria-label="Export format"
+              <Select
+                compact
+                ariaLabel="Export format"
                 value={format}
-                onChange={(e) => setFormat(e.target.value)}
-                style={{ width: 94, minHeight: 39, fontSize: 11 }}
-              >
-                <option value="csv">CSV</option>
-                <option value="xlsx">Excel</option>
-                <option value="pdf">PDF</option>
-              </select>
+                onChange={setFormat}
+                style={{ width: 94 }}
+                options={[
+                  { value: "csv", label: "CSV" },
+                  { value: "xlsx", label: "Excel" },
+                  { value: "pdf", label: "PDF" },
+                ]}
+              />
               <Button busy={exporting} onClick={exportFile}>
                 <Download size={15} />
                 Export report
@@ -101,7 +137,7 @@ export default function Reports({
             </>
           )}
       </PageHeading>
-      {payroll ? (
+      {salaryMode ? (
         <Notice>
           <strong>Estimates, not finalized payroll.</strong> Leave, half-day,
           and prorating policies still need business approval. Unmarked days are
@@ -149,6 +185,23 @@ export default function Reports({
       )}
       <section className="panel">
         <div className="toolbar">
+          {!payroll && canSalaryReport && (
+            <Select
+              compact
+              ariaLabel="Report type"
+              searchable={false}
+              value={reportType}
+              style={{ width: 150 }}
+              onChange={(v) => {
+                setReportType(v);
+                setPage(1);
+              }}
+              options={[
+                { value: "attendance", label: "Attendance report" },
+                { value: "salary", label: "Salary report" },
+              ]}
+            />
+          )}
           {!payroll && (
             <SearchInput
               value={search}
@@ -159,7 +212,26 @@ export default function Reports({
               placeholder="Search employee name…"
             />
           )}
-          {payroll ? (
+          {canFilterEmployee && (
+            <Select
+              compact
+              ariaLabel="Employee filter"
+              value={employeeId}
+              onChange={(v) => {
+                setEmployeeId(v);
+                setPage(1);
+              }}
+              style={{ width: 230 }}
+              options={[
+                { value: "", label: "All employees" },
+                ...(people.data?.data || []).map((p) => ({
+                  value: p._id,
+                  label: `${p.fullName} · ${p.employeeCode}`,
+                })),
+              ]}
+            />
+          )}
+          {salaryMode ? (
             <input
               aria-label="Payroll month"
               type="month"
@@ -197,7 +269,7 @@ export default function Reports({
           )}
           <span className="toolbar-spacer" />
           <small>
-            {payroll
+            {salaryMode
               ? `${user.company.currency} · Monthly estimates`
               : "Scoped to your access permissions"}
           </small>
@@ -208,7 +280,7 @@ export default function Reports({
           <ErrorState error={query.error} retry={() => query.refetch()} />
         ) : !query.data?.data.length ? (
           <Empty />
-        ) : payroll ? (
+        ) : salaryMode ? (
           <div className="table-wrap">
             <table className="table-mobile">
               <thead>
@@ -229,9 +301,7 @@ export default function Reports({
                         <Avatar name={row.employeeName} index={index} />
                         <div>
                           <strong>{row.employeeName}</strong>
-                          <small>
-                            {row.employeeCode} · {row.department}
-                          </small>
+                          <small>{row.employeeCode}</small>
                         </div>
                       </div>
                     </td>
@@ -291,7 +361,7 @@ export default function Reports({
                 ["Approved overtime", selected.approvedOt],
                 ["Net calculated estimate", selected.netPayable],
               ].map(([name, amount]) => (
-                <div key={name} className="flex space-between">
+                <div key={name} className="row space-between">
                   <span>{name}</span>
                   <strong>{money(Number(amount), selected.currency)}</strong>
                 </div>

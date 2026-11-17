@@ -17,6 +17,12 @@ import {
   Inbox,
 } from "lucide-react";
 import { initials, label } from "@/lib/format";
+export {
+  Select,
+  type SelectOption,
+  type SelectGroup,
+  type SelectItem,
+} from "./ui/select";
 export function Logo({ compact = false }: { compact?: boolean }) {
   return (
     <div className="brand">

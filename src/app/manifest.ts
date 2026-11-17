@@ -3,7 +3,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "SME Attendance",
     short_name: "SME",
-    description: "Your people, in sync.",
+    description: "Employees, in sync.",
     start_url: "/dashboard",
     display: "standalone",
     background_color: "#f7f9f8",

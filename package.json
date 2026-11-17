@@ -10,8 +10,7 @@
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
-    "postinstall": "node scripts/fix-magic-string.cjs"
+    "lint": "eslint ."
   },
   "overrides": {
     "@typescript-eslint/typescript-estree": {

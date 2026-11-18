@@ -200,18 +200,31 @@ export default function Attendance({
     const key = `${employee.employeeId}|${workDate}`;
     if (!canMark || workDate > today || busyCell || hoursTarget) return;
     const record = records.get(key);
-    // A saved mark cycles A ↔ P; hourly Present days reopen the hours editor.
+    // The register cycles – → A → P → –; the last tap clears the saved record.
     if (record?.status === "PRESENT") {
-      if (employee.payType === "HOURLY") {
-        setHoursTarget({
-          employee,
-          workDate,
-          value: record.regularMinutes
-            ? String(Number((record.regularMinutes / 60).toFixed(2)))
-            : "",
-        });
+      // A Present day saved without hours keeps the hours editor within reach.
+      if (employee.payType === "HOURLY" && !record.regularMinutes) {
+        setHoursTarget({ employee, workDate, value: "" });
         return;
       }
+      setBusyCell(key);
+      try {
+        await api(
+          `/attendance/${employee.employeeId}/${workDate}?version=${record.version}`,
+          { method: "DELETE" },
+        );
+        await client.invalidateQueries();
+        toast(
+          `${employee.employeeName} is unmarked on ${dateLabel(workDate)}.`,
+        );
+      } catch (e) {
+        toast((e as Error).message, true);
+      } finally {
+        setBusyCell("");
+      }
+      return;
+    }
+    if (!record || record.status === "UNMARKED") {
       setBusyCell(key);
       await quickMark(cellTarget(employee, workDate), "ABSENT");
       setBusyCell("");
@@ -255,6 +268,29 @@ export default function Attendance({
     );
     setSavingHours(false);
     if (saved) setHoursTarget(null);
+  }
+  async function clearFromHours() {
+    if (!hoursTarget) return;
+    const { employee, workDate } = hoursTarget;
+    const record = records.get(`${employee.employeeId}|${workDate}`);
+    if (!record) {
+      setHoursTarget(null);
+      return;
+    }
+    setSavingHours(true);
+    try {
+      await api(
+        `/attendance/${employee.employeeId}/${workDate}?version=${record.version}`,
+        { method: "DELETE" },
+      );
+      await client.invalidateQueries();
+      toast(`${employee.employeeName} is unmarked on ${dateLabel(workDate)}.`);
+      setHoursTarget(null);
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setSavingHours(false);
+    }
   }
   const hoursRecord = hoursTarget
     ? records.get(`${hoursTarget.employee.employeeId}|${hoursTarget.workDate}`)
@@ -483,7 +519,11 @@ export default function Attendance({
             <div className="form-body">
               <Field
                 label="Hours worked"
-                hint={`Optional · up to ${hoursTarget.employee.standardDailyHours || 8} hours. Skip hours saves Present without them.`}
+                hint={
+                  hoursRecord?.status === "PRESENT"
+                    ? `Hours were skipped for this Present day. Add them now, or mark absent / dash below.`
+                    : `Optional · up to ${hoursTarget.employee.standardDailyHours || 8} hours. Skip hours saves Present without them.`
+                }
               >
                 <input
                   type="number"
@@ -501,15 +541,25 @@ export default function Attendance({
             </div>
             <div className="form-actions">
               {hoursRecord?.status === "PRESENT" && (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="mr-auto text-danger"
-                  disabled={savingHours}
-                  onClick={() => void markAbsentFromHours()}
-                >
-                  Mark absent
-                </Button>
+                <div className="mr-auto flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="text-danger"
+                    disabled={savingHours}
+                    onClick={() => void markAbsentFromHours()}
+                  >
+                    Mark absent
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={savingHours}
+                    onClick={() => void clearFromHours()}
+                  >
+                    Dash (–)
+                  </Button>
+                </div>
               )}
               <Button
                 type="button"

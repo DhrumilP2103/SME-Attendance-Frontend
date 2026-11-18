@@ -1,17 +1,18 @@
 "use client";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
 import { DateTime } from "luxon";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   CalendarDays,
-  Download,
-  Pencil,
+  Check,
+  CheckCircle2,
   Clock3,
-  History,
+  Download,
   LogIn,
   LogOut,
-  CheckCircle2,
   RefreshCw,
+  TriangleAlert,
+  X,
 } from "lucide-react";
 import { useData, useToast } from "@/app/providers";
 import {
@@ -20,26 +21,16 @@ import {
   Button,
   Empty,
   ErrorState,
-  Field,
   Loading,
-  Modal,
   Notice,
   PageHeading,
   Pagination,
   SearchInput,
   Select,
 } from "@/components/ui";
-import {
-  dateNow,
-  dateLabel,
-  label,
-  time,
-  money,
-  minor,
-  major,
-} from "@/lib/format";
+import { dateNow, dateLabel, label, time, money } from "@/lib/format";
 import { download, mutate, queryString } from "@/lib/api";
-import type { AttendanceRow, AuthUser } from "@/types";
+import type { AttendanceRow, AuthUser, MissingHours } from "@/types";
 
 export default function Attendance({
   user,
@@ -49,15 +40,22 @@ export default function Attendance({
   self?: boolean;
 }) {
   const [date, setDate] = useState(dateNow(user.company.timezone)),
-    [status, setStatus] = useState(""),
+    // The team register opens on the people who still need a mark.
+    [status, setStatus] = useState(self ? "" : "PENDING"),
     [search, setSearch] = useState(""),
-    [page, setPage] = useState(1),
-    [edit, setEdit] = useState<AttendanceRow | null>(null);
-  const toast = useToast();
+    [page, setPage] = useState(1);
+  const toast = useToast(),
+    client = useQueryClient(),
+    p = user.effectivePermissions,
+    today = dateNow(user.company.timezone),
+    // A rolling window keeps the previous month in view on the first days of a month.
+    missingFrom =
+      DateTime.fromISO(today).minus({ days: 30 }).toISODate() || today,
+    yesterday = DateTime.fromISO(today).minus({ days: 1 }).toISODate() || "";
   const filters = queryString({
     from: self ? `${date.slice(0, 7)}-01` : date,
     to: date,
-    status,
+    status: status === "PENDING" ? "UNMARKED" : status,
     search,
     page,
     limit: 10,
@@ -66,8 +64,50 @@ export default function Attendance({
       : undefined,
   });
   const query = useData<AttendanceRow[]>(`/attendance?${filters}`);
-  const p = user.effectivePermissions;
+  const canMark = !self && p.canMarkTeamAttendance;
+  const missing = useData<MissingHours>(
+    `/attendance/missing-hours?${queryString({ from: missingFrom, to: yesterday })}`,
+    canMark && Boolean(yesterday),
+  );
   const summary = query.data?.meta?.summary;
+  const missingDays = [
+    ...new Set(missing.data?.data.rows.map((row) => row.workDate) || []),
+  ];
+  async function quickMark(
+    row: AttendanceRow,
+    next: "PRESENT" | "ABSENT",
+    hours?: number,
+  ) {
+    try {
+      const payRole = ["ADMIN", "HR"].includes(user.role),
+        body: Record<string, unknown> = {
+          status: next,
+          version: row.version,
+          modificationReason: `Quick mark from the attendance register: ${label(next).toLowerCase()}.`,
+        };
+      if (next === "ABSENT") {
+        Object.assign(body, { inTime: null, outTime: null });
+        if (payRole) body.regularMinutes = 0;
+        if (p.canToggleOT)
+          Object.assign(body, { isOvertime: false, otAmount: 0, otRemark: "" });
+      }
+      if (hours !== undefined && payRole)
+        body.regularMinutes = Math.round(hours * 60);
+      await mutate(
+        `/attendance/${row.employeeId}/${row.workDate}`,
+        "PUT",
+        body,
+      );
+      await client.invalidateQueries();
+      toast(
+        `${row.employeeName} marked ${label(next).toLowerCase()}${hours !== undefined ? ` · ${hours} hrs` : ""}.`,
+      );
+      return true;
+    } catch (e) {
+      toast((e as Error).message, true);
+      return false;
+    }
+  }
   return (
     <>
       <PageHeading
@@ -123,6 +163,35 @@ export default function Attendance({
           ))}
         </div>
       )}
+      {canMark && missing.data?.data.count ? (
+        <Notice>
+          <strong>
+            {missing.data.data.count} hourly{" "}
+            {missing.data.data.count === 1 ? "record is" : "records are"}{" "}
+            missing hours.
+          </strong>{" "}
+          Add the hours for previous days so payroll stays accurate.
+          <div className="row" style={{ flexWrap: "wrap", marginTop: 8 }}>
+            {missingDays.slice(0, 5).map((day) => (
+              <button
+                key={day}
+                type="button"
+                className="btn btn-secondary"
+                style={{ minHeight: 27, padding: "4px 9px", fontSize: 10 }}
+                onClick={() => {
+                  setDate(day);
+                  setPage(1);
+                }}
+              >
+                {dateLabel(day)}
+              </button>
+            ))}
+            {missingDays.length > 5 && (
+              <small>+{missingDays.length - 5} more days</small>
+            )}
+          </div>
+        </Notice>
+      ) : null}
       <section className="panel">
         <div className="toolbar">
           {!self && (
@@ -153,16 +222,10 @@ export default function Attendance({
               setPage(1);
             }}
             options={[
+              { value: "PENDING", label: "Pending" },
+              { value: "PRESENT", label: "Present" },
+              { value: "ABSENT", label: "Absent" },
               { value: "", label: "All statuses" },
-              ...[
-                "PRESENT",
-                "ABSENT",
-                "HALF_DAY",
-                "LEAVE",
-                "HOLIDAY",
-                "INCOMPLETE",
-                "UNMARKED",
-              ].map((s) => ({ value: s, label: label(s) })),
             ]}
           />
           <span className="toolbar-spacer" />
@@ -178,7 +241,7 @@ export default function Attendance({
           <AttendanceTable
             rows={query.data.data}
             user={user}
-            onEdit={!self && p.canMarkTeamAttendance ? setEdit : undefined}
+            onQuickMark={canMark ? quickMark : undefined}
             showDate={self}
           />
         )}
@@ -190,25 +253,22 @@ export default function Attendance({
           />
         )}
       </section>
-      {edit && (
-        <AttendanceEditor
-          row={edit}
-          user={user}
-          onClose={() => setEdit(null)}
-        />
-      )}
     </>
   );
 }
 export function AttendanceTable({
   rows,
   user,
-  onEdit,
+  onQuickMark,
   showDate = false,
 }: {
   rows: AttendanceRow[];
   user: AuthUser;
-  onEdit?: (row: AttendanceRow) => void;
+  onQuickMark?: (
+    row: AttendanceRow,
+    status: "PRESENT" | "ABSENT",
+    hours?: number,
+  ) => Promise<boolean>;
   showDate?: boolean;
 }) {
   const pay =
@@ -226,7 +286,7 @@ export function AttendanceTable({
             <th>Hours</th>
             <th>Status</th>
             {pay && <th>Overtime</th>}
-            {onEdit && <th />}
+            {onQuickMark && <th>Mark</th>}
           </tr>
         </thead>
         <tbody>
@@ -249,7 +309,23 @@ export function AttendanceTable({
                 {time(row.outTime, user.company.timezone)}
               </td>
               <td data-label="Hours">
-                {row.totalHours ? `${row.totalHours.toFixed(1)} hrs` : "—"}
+                <span className="inline-flex items-center gap-[6px]">
+                  {row.totalHours
+                    ? `${row.totalHours.toFixed(1)} hrs`
+                    : row.regularMinutes
+                      ? `${(row.regularMinutes / 60).toFixed(1)} hrs`
+                      : "—"}
+                  {row.payType === "HOURLY" &&
+                    row.status === "PRESENT" &&
+                    !row.regularMinutes && (
+                      <span
+                        className="inline-flex items-center gap-[3px] text-[10px] font-semibold text-warn"
+                        title="No approved hours recorded for this hourly employee."
+                      >
+                        <TriangleAlert size={12} /> Missing
+                      </span>
+                    )}
+                </span>
               </td>
               <td data-label="Status">
                 <Badge status={row.isIncomplete ? "INCOMPLETE" : row.status} />
@@ -265,15 +341,9 @@ export function AttendanceTable({
                   )}
                 </td>
               )}
-              {onEdit && (
-                <td>
-                  <button
-                    className="icon-button"
-                    aria-label={`Edit attendance for ${row.employeeName}`}
-                    onClick={() => onEdit(row)}
-                  >
-                    <Pencil size={14} />
-                  </button>
+              {onQuickMark && (
+                <td data-label="Mark">
+                  <QuickMark row={row} onMark={onQuickMark} />
                 </td>
               )}
             </tr>
@@ -283,259 +353,134 @@ export function AttendanceTable({
     </div>
   );
 }
-function AttendanceEditor({
+function QuickMark({
   row,
-  user,
-  onClose,
+  onMark,
 }: {
   row: AttendanceRow;
-  user: AuthUser;
-  onClose: () => void;
+  onMark: (
+    row: AttendanceRow,
+    status: "PRESENT" | "ABSENT",
+    hours?: number,
+  ) => Promise<boolean>;
 }) {
-  const [status, setStatus] = useState(
-      row.status === "UNMARKED" ? "PRESENT" : row.status,
-    ),
-    [ot, setOt] = useState(row.isOvertime),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [auditOpen, setAuditOpen] = useState(false);
-  const toast = useToast(),
-    client = useQueryClient(),
-    zone = user.company.timezone;
-  const working = ["PRESENT", "HALF_DAY"].includes(status);
-  const audit = useData<
-    {
-      _id: string;
-      action: string;
-      actorId?: { name: string };
-      createdAt: string;
-      reason?: string;
-      before?: unknown;
-      after?: unknown;
-    }[]
-  >(`/attendance/${row.employeeId}/${row.workDate}/audit`, auditOpen);
-  const localTime = (value: string | null) =>
-    value
-      ? DateTime.fromISO(value).setZone(zone).toFormat("yyyy-MM-dd'T'HH:mm")
-      : "";
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const [open, setOpen] = useState(false),
+    [hours, setHours] = useState(""),
+    [busy, setBusy] = useState(false);
+  const hourly = row.payType === "HOURLY",
+    day = dateLabel(row.workDate);
+  async function mark(status: "PRESENT" | "ABSENT", worked?: number) {
     setBusy(true);
-    setError("");
-    const form = new FormData(event.currentTarget);
-    try {
-      const stamp = (key: string) =>
-        form.get(key)
-          ? DateTime.fromISO(String(form.get(key)), { zone })
-              .toUTC()
-              .toISO()
-          : null;
-      const body: Record<string, unknown> = {
-        status,
-        inTime: working ? stamp("inTime") : null,
-        outTime: working ? stamp("outTime") : null,
-        modificationReason: form.get("reason"),
-        version: row.version,
-      };
-      if (["ADMIN", "HR"].includes(user.role))
-        body.regularMinutes = working
-          ? Math.round(Number(form.get("regularHours")) * 60)
-          : 0;
-      if (user.effectivePermissions.canToggleOT)
-        Object.assign(body, {
-          isOvertime: working && ot,
-          otAmount:
-            working && ot
-              ? minor(String(form.get("amount")), user.company.currency)
-              : 0,
-          otRemark: working && ot ? form.get("remark") : "",
-        });
-      await mutate(
-        `/attendance/${row.employeeId}/${row.workDate}`,
-        "PUT",
-        body,
-      );
-      await client.invalidateQueries();
-      toast("Attendance saved. The change is recorded in the audit trail.");
-      onClose();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    const saved = await onMark(row, status, worked);
+    setBusy(false);
+    if (saved) setOpen(false);
   }
-  return (
-    <Modal
-      title="Make every hour count."
-      description={`${row.employeeName} · ${dateLabel(row.workDate)}`}
-      onClose={onClose}
-    >
-      <form onSubmit={submit}>
-        <div className="form-body">
-          <Field label="Attendance status">
-            <Select
-              ariaLabel="Attendance status"
-              value={status}
-              onChange={setStatus}
-              options={[
-                "PRESENT",
-                "ABSENT",
-                "HALF_DAY",
-                "LEAVE",
-                "HOLIDAY",
-              ].map((s) => ({ value: s, label: label(s) }))}
-            />
-          </Field>
-          {working && (
-            <div className="form-grid" style={{ marginTop: 18 }}>
-              <Field label={`Check-in (${zone})`}>
-                <input
-                  name="inTime"
-                  type="datetime-local"
-                  defaultValue={localTime(row.inTime)}
-                />
-              </Field>
-              <Field label="Check-out">
-                <input
-                  name="outTime"
-                  type="datetime-local"
-                  defaultValue={localTime(row.outTime)}
-                />
-              </Field>
-              {["ADMIN", "HR"].includes(user.role) && (
-                <div className="full">
-                  <Field
-                    label="Approved regular hours"
-                    hint="Exclude overtime. Must fit the completed shift."
-                  >
-                    <input
-                      name="regularHours"
-                      type="number"
-                      min="0"
-                      max="16"
-                      step="0.25"
-                      defaultValue={row.regularMinutes / 60}
-                      required
-                    />
-                  </Field>
-                </div>
-              )}
-            </div>
-          )}
-          {working && user.effectivePermissions.canToggleOT && (
-            <>
-              <label className="toggle-row">
-                <div>
-                  <h3>Overtime</h3>
-                  <p>A little extra effort deserves recognition.</p>
-                </div>
-                <input
-                  className="switch"
-                  type="checkbox"
-                  checked={ot}
-                  onChange={(e) => setOt(e.target.checked)}
-                  aria-label="Enable overtime"
-                />
-              </label>
-              {ot && (
-                <div className="ot-fields">
-                  <Field label={`OT amount (${user.company.currency})`}>
-                    <input
-                      name="amount"
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      defaultValue={
-                        major(row.otAmount || 0, user.company.currency) || ""
-                      }
-                      required
-                    />
-                  </Field>
-                  <Field label="OT remark">
-                    <textarea
-                      name="remark"
-                      placeholder="What was the extra time for?"
-                      defaultValue={row.otRemark}
-                      required
-                      maxLength={1000}
-                    />
-                  </Field>
-                </div>
-              )}
-            </>
-          )}
-          <div style={{ marginTop: 18 }}>
-            <Field
-              label={row.version ? "Reason for change" : "Note (optional)"}
-            >
-              <textarea
-                name="reason"
-                required={row.version > 0}
-                maxLength={1000}
-                placeholder="Add a little context for the audit trail…"
-              />
-            </Field>
-          </div>
-          {error && (
-            <div className="auth-error" role="alert">
-              {error}
-            </div>
-          )}
-          {row.id && user.effectivePermissions.canViewSalaryImpact && (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setAuditOpen(!auditOpen)}
-            >
-              <History size={14} />
-              {auditOpen ? "Hide" : "View"} change history
-            </Button>
-          )}
-          {auditOpen && (
-            <div>
-              {audit.isPending ? (
-                <Loading />
-              ) : audit.error ? (
-                <p className="form-error">{audit.error.message}</p>
-              ) : !audit.data.data.length ? (
-                <p className="muted">No changes yet.</p>
-              ) : (
-                audit.data.data.map((entry) => (
-                  <div className="audit-item" key={entry._id}>
-                    <strong>
-                      {label(entry.action)} · {entry.actorId?.name || "System"}
-                    </strong>
-                    <p>
-                      {new Date(entry.createdAt).toLocaleString()} ·{" "}
-                      {entry.reason || "Recorded action"}
-                    </p>
-                    <details>
-                      <summary style={{ fontSize: 11 }}>Changed values</summary>
-                      <pre>
-                        {JSON.stringify(
-                          { before: entry.before, after: entry.after },
-                          null,
-                          2,
-                        )}
-                      </pre>
-                    </details>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-        </div>
-        <div className="form-actions">
-          <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button busy={busy}>
-            <CheckCircle2 size={15} />
-            Save attendance
-          </Button>
-        </div>
+  if (open)
+    return (
+      <form
+        className="flex items-center gap-[6px]"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const raw = hours.trim();
+          // Hours are optional: an empty field still records the present mark.
+          if (!raw) {
+            await mark("PRESENT");
+            return;
+          }
+          const value = Number(raw);
+          if (Number.isFinite(value) && value > 0) await mark("PRESENT", value);
+        }}
+      >
+        <input
+          aria-label={`Hours worked by ${row.employeeName} on ${day}`}
+          type="number"
+          min="0.25"
+          max={row.standardDailyHours || 8}
+          step="0.25"
+          autoFocus
+          value={hours}
+          onChange={(e) => setHours(e.target.value)}
+          placeholder="Optional"
+          className="min-h-[32px] w-[84px] px-2 py-[4px] text-[12px]"
+        />
+        <button
+          type="submit"
+          title={`Save hours for ${row.employeeName}`}
+          className="grid size-[32px] place-items-center rounded-[8px] border border-ok bg-ok text-white shadow-sm hover:border-ok"
+          disabled={busy}
+          aria-label={`Save hours for ${row.employeeName}`}
+        >
+          <Check size={15} />
+        </button>
+        <button
+          type="button"
+          className="grid size-[32px] place-items-center rounded-[8px] border border-field bg-white text-muted hover:border-stone"
+          aria-label="Cancel hours entry"
+          onClick={() => setOpen(false)}
+        >
+          <X size={14} />
+        </button>
       </form>
-    </Modal>
+    );
+  return (
+    <div className="flex items-center gap-[6px]">
+      <button
+        type="button"
+        title={`Mark ${row.employeeName} absent`}
+        aria-label={`Mark ${row.employeeName} absent on ${day}`}
+        aria-pressed={row.status === "ABSENT"}
+        disabled={busy || row.status === "ABSENT"}
+        className={`grid size-[32px] place-items-center rounded-[8px] border text-[12px] font-extrabold transition ${
+          row.status === "ABSENT"
+            ? "border-bad bg-bad text-white shadow-sm ring-2 ring-bad/25"
+            : "border-bad-soft bg-bad-soft text-bad hover:border-bad hover:bg-bad hover:text-white"
+        }`}
+        onClick={() => void mark("ABSENT")}
+      >
+        A
+      </button>
+      <button
+        type="button"
+        title={`Mark ${row.employeeName} present`}
+        aria-label={`Mark ${row.employeeName} present on ${day}`}
+        aria-pressed={row.status === "PRESENT"}
+        disabled={busy || row.status === "PRESENT"}
+        className={`grid size-[32px] place-items-center rounded-[8px] border text-[12px] font-extrabold transition ${
+          row.status === "PRESENT"
+            ? "border-ok bg-ok text-white shadow-sm ring-2 ring-ok/25"
+            : "border-ok-soft bg-ok-soft text-ok hover:border-ok hover:bg-ok hover:text-white"
+        }`}
+        onClick={() => void mark("PRESENT")}
+      >
+        P
+      </button>
+      {hourly && (
+        <button
+          type="button"
+          title={
+            row.regularMinutes
+              ? `Edit hours for ${row.employeeName}`
+              : `Enter hours for ${row.employeeName}`
+          }
+          aria-label={`Enter hours for ${row.employeeName} on ${day}`}
+          className={`grid size-[32px] place-items-center rounded-[8px] border transition ${
+            row.regularMinutes
+              ? "border-info bg-info-soft text-info"
+              : "border-info-soft bg-white text-info hover:border-info hover:bg-info-soft"
+          }`}
+          onClick={() => {
+            setHours(
+              row.regularMinutes
+                ? String(Number((row.regularMinutes / 60).toFixed(2)))
+                : String(row.standardDailyHours || 8),
+            );
+            setOpen(true);
+          }}
+        >
+          <Clock3 size={15} />
+        </button>
+      )}
+    </div>
   );
 }
 function PunchCard({ user }: { user: AuthUser }) {

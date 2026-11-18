@@ -14,6 +14,8 @@ import {
   Eye,
   EyeOff,
   Users,
+  Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import { useData, useToast } from "@/app/providers";
 import {
@@ -45,9 +47,12 @@ export default function Employees({
     [page, setPage] = useState(1),
     [status, setStatus] = useState(""),
     [account, setAccount] = useState(""),
-    [grid, setGrid] = useState(false);
+    [grid, setGrid] = useState(false),
+    [pendingDelete, setPendingDelete] = useState<Employee | null>(null),
+    [deleting, setDeleting] = useState(false);
   const router = useRouter(),
-    toast = useToast();
+    toast = useToast(),
+    client = useQueryClient();
   const query = useData<Employee[]>(
     `/employees?${queryString({ search, page, limit: 10, status, accountRole: account })}`,
   );
@@ -55,7 +60,22 @@ export default function Employees({
     `/employees/${employeeId}`,
     Boolean(employeeId && employeeId !== "new"),
   );
-  const canPay = user.effectivePermissions.canViewSalaryImpact;
+  const canPay = user.effectivePermissions.canViewSalaryImpact,
+    isOwn = (employee: Employee) => employee._id === user.employeeId;
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    try {
+      await mutate(`/employees/${pendingDelete._id}`, "DELETE", {});
+      await client.invalidateQueries();
+      toast(`${pendingDelete.fullName} and all related records were deleted.`);
+      setPendingDelete(null);
+    } catch (e) {
+      toast((e as Error).message, true);
+    } finally {
+      setDeleting(false);
+    }
+  }
   return (
     <>
       <PageHeading
@@ -161,7 +181,7 @@ export default function Employees({
                   </div>
                 </div>
                 <h3>{employee.fullName}</h3>
-                <p>{employee.email}</p>
+                {employee.email && <p>{employee.email}</p>}
                 <div className="card-bottom">
                   <Link
                     href={`/employees/${employee._id}`}
@@ -169,6 +189,20 @@ export default function Employees({
                   >
                     View profile <ArrowUpRight size={14} />
                   </Link>
+                  <button
+                    type="button"
+                    className="icon-button size-[30px] text-danger hover:bg-danger-soft"
+                    aria-label={`Delete ${employee.fullName}`}
+                    title={
+                      isOwn(employee)
+                        ? "You cannot delete your own account."
+                        : `Delete ${employee.fullName}`
+                    }
+                    disabled={isOwn(employee)}
+                    onClick={() => setPendingDelete(employee)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               </article>
             ))}
@@ -210,7 +244,8 @@ export default function Employees({
                             )}
                           </div>
                           <small>
-                            {employee.employeeCode} · {employee.email}
+                            {employee.employeeCode}
+                            {employee.email ? ` · ${employee.email}` : ""}
                           </small>
                         </div>
                       </div>
@@ -236,13 +271,29 @@ export default function Employees({
                       <Badge status={employee.status} />
                     </td>
                     <td>
-                      <Link
-                        className="icon-button"
-                        aria-label={`Edit ${employee.fullName}`}
-                        href={`/employees/${employee._id}`}
-                      >
-                        <Pencil size={15} />
-                      </Link>
+                      <div className="flex items-center gap-[4px]">
+                        <Link
+                          className="icon-button"
+                          aria-label={`Edit ${employee.fullName}`}
+                          href={`/employees/${employee._id}`}
+                        >
+                          <Pencil size={15} />
+                        </Link>
+                        <button
+                          type="button"
+                          className="icon-button text-danger hover:bg-danger-soft"
+                          aria-label={`Delete ${employee.fullName}`}
+                          title={
+                            isOwn(employee)
+                              ? "You cannot delete your own account."
+                              : `Delete ${employee.fullName}`
+                          }
+                          disabled={isOwn(employee)}
+                          onClick={() => setPendingDelete(employee)}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -275,6 +326,48 @@ export default function Employees({
           <ErrorState error={selected.error} />
         </Modal>
       ) : null}
+      {pendingDelete && (
+        <Modal
+          title="Delete employee?"
+          description={`${pendingDelete.fullName} · ${pendingDelete.employeeCode}`}
+          onClose={() => {
+            if (!deleting) setPendingDelete(null);
+          }}
+        >
+          <div className="form-body">
+            <div className="flex items-start gap-3 rounded-[9px] border border-danger-line bg-danger-soft p-[15px] text-danger">
+              <TriangleAlert size={18} />
+              <div className="text-[12px] leading-[1.5]">
+                <strong>This action cannot be undone.</strong>
+                <p className="mt-[6px]">
+                  Deleting {pendingDelete.fullName} permanently removes the
+                  employee profile, sign-in account and sessions, attendance and
+                  approved-hours history, and any queued invitations.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="form-actions">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={deleting}
+              onClick={() => setPendingDelete(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              busy={deleting}
+              onClick={confirmDelete}
+            >
+              <Trash2 size={15} />
+              Delete permanently
+            </Button>
+          </div>
+        </Modal>
+      )}
       <div className="footer">
         <span>
           <Users size={12} style={{ display: "inline", marginRight: 5 }} />A
@@ -316,7 +409,9 @@ function EmployeeForm({
     setBusy(true);
     setError("");
     const form = new FormData(event.currentTarget),
-      value = (key: string) => String(form.get(key) || "");
+      value = (key: string) => String(form.get(key) || ""),
+      email = value("email").trim().toLowerCase(),
+      password = value("password");
     try {
       const body: Record<string, unknown> = {
         fullName: value("fullName"),
@@ -332,13 +427,22 @@ function EmployeeForm({
         weeklyOffDays: form.getAll("off").map(Number),
       };
       if (!employee) {
-        body.email = value("email");
-        if (value("password") !== value("confirm"))
-          throw new Error("The passwords do not match.");
-        body.password = value("password");
+        if (email) body.email = email;
+        if (password || value("confirm")) {
+          if (!email)
+            throw new Error(
+              "Add an email address so this account can sign in.",
+            );
+          if (password.length < 6)
+            throw new Error("Use at least 6 characters for the password.");
+          if (password !== value("confirm"))
+            throw new Error("The passwords do not match.");
+          body.password = password;
+        }
         body.role =
           user.role === "ADMIN" && accountType === "HR" ? "HR" : "EMPLOYEE";
       } else {
+        if (email) body.email = email;
         body.version = employee.version;
         body.status = value("status");
       }
@@ -353,7 +457,10 @@ function EmployeeForm({
             payType === "HOURLY"
               ? minor(value("rate"), user.company.currency)
               : 0,
-          salaryDivisorPolicy: value("divisor") || "FIXED_30",
+          salaryDivisorPolicy:
+            payType === "SALARIED"
+              ? value("divisor") || "FIXED_30"
+              : employee?.salaryDivisorPolicy || "FIXED_30",
         });
       if (
         employee?.status === "ACTIVE" &&
@@ -372,9 +479,11 @@ function EmployeeForm({
       toast(
         employee
           ? "Employee profile updated."
-          : user.role === "ADMIN" && accountType === "HR"
-            ? "HR account created. They can sign in with the password you set."
-            : "Employee added. They can sign in with the password you set.",
+          : password
+            ? user.role === "ADMIN" && accountType === "HR"
+              ? "HR account created. They can sign in with the password you set."
+              : "Employee added. They can sign in with the password you set."
+            : "Employee added. Add an email and password later to enable sign-in.",
       );
       onClose();
     } catch (e) {
@@ -388,8 +497,8 @@ function EmployeeForm({
       title={employee ? "Employee profile" : "Make room for someone great."}
       description={
         employee
-          ? `${employee.employeeCode} · ${employee.email}`
-          : "Add their details and set a password so they can sign in right away."
+          ? `${employee.employeeCode}${employee.email ? ` · ${employee.email}` : ""}`
+          : "Add their details now and set a password only if they need sign-in access."
       }
       wide
       onClose={onClose}
@@ -433,13 +542,18 @@ function EmployeeForm({
                 placeholder="e.g. Alex Morgan"
               />
             </Field>
-            <Field label="Email address">
+            <Field
+              label="Email address"
+              hint={
+                employee?.email
+                  ? undefined
+                  : "Optional. Required only when this person needs sign-in access."
+              }
+            >
               <input
                 name="email"
                 type="email"
                 defaultValue={employee?.email}
-                required
-                disabled={!!employee}
                 placeholder="alex@company.com"
               />
             </Field>
@@ -447,7 +561,7 @@ function EmployeeForm({
               <>
                 <Field
                   label="Password"
-                  hint="At least 6 characters. Share it with the user securely."
+                  hint="Optional · At least 6 characters. Leave blank to skip sign-in access."
                 >
                   <div className="password-input">
                     <input
@@ -456,7 +570,6 @@ function EmployeeForm({
                       minLength={6}
                       maxLength={128}
                       autoComplete="new-password"
-                      required
                     />
                     <button
                       type="button"
@@ -476,7 +589,6 @@ function EmployeeForm({
                       minLength={6}
                       maxLength={128}
                       autoComplete="new-password"
-                      required
                     />
                     <button
                       type="button"
@@ -623,18 +735,20 @@ function EmployeeForm({
                     />
                   </Field>
                 )}
-                <Field label="Salary divisor">
-                  <Select
-                    name="divisor"
-                    ariaLabel="Salary divisor"
-                    defaultValue={employee?.salaryDivisorPolicy || "FIXED_30"}
-                    options={[
-                      { value: "FIXED_30", label: "30 fixed days" },
-                      { value: "FIXED_26", label: "26 working days" },
-                      { value: "CALENDAR", label: "Actual calendar days" },
-                    ]}
-                  />
-                </Field>
+                {payType === "SALARIED" && (
+                  <Field label="Salary divisor">
+                    <Select
+                      name="divisor"
+                      ariaLabel="Salary divisor"
+                      defaultValue={employee?.salaryDivisorPolicy || "FIXED_30"}
+                      options={[
+                        { value: "FIXED_30", label: "30 fixed days" },
+                        { value: "FIXED_26", label: "26 working days" },
+                        { value: "CALENDAR", label: "Actual calendar days" },
+                      ]}
+                    />
+                  </Field>
+                )}
               </>
             )}
             {employee && (
@@ -661,7 +775,7 @@ function EmployeeForm({
           )}
         </div>
         <div className="form-actions">
-          {employee && (
+          {employee && employee.email && (
             <Button
               type="button"
               variant="ghost"

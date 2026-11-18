@@ -16,13 +16,22 @@ import {
 } from "lucide-react";
 import { Logo, Button, Field, Avatar, Select } from "@/components/ui";
 import { useData } from "@/app/providers";
-import { mutate, clearSessionToken } from "@/lib/api";
+import { api, mutate, clearSessionToken } from "@/lib/api";
+import type { AuthUser } from "@/types";
 
 const loginSchema = z.object({
   email: z.email(),
   password: z.string().min(1, "Enter your password."),
   rememberMe: z.boolean(),
 });
+async function landingPath() {
+  try {
+    const me = await api<AuthUser>("/auth/me");
+    return me.data.role === "HR" ? "/attendance" : "/dashboard";
+  } catch {
+    return "/dashboard";
+  }
+}
 export default function AuthPage({ mode }: { mode: string }) {
   const router = useRouter(),
     client = useQueryClient();
@@ -60,7 +69,7 @@ export default function AuthPage({ mode }: { mode: string }) {
     try {
       await mutate("/auth/login", "POST", body);
       client.clear();
-      router.replace("/dashboard");
+      router.replace(await landingPath());
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -74,7 +83,7 @@ export default function AuthPage({ mode }: { mode: string }) {
       clearSessionToken();
       await mutate("/auth/demo", "POST", { role });
       client.clear();
-      router.replace("/dashboard");
+      router.replace(await landingPath());
     } catch (e) {
       setError((e as Error).message);
     } finally {

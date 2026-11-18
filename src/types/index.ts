@@ -68,6 +68,18 @@ export interface AttendanceRow {
   otRemark?: string;
   version: number;
   shiftStart: string;
+  payType: "SALARIED" | "HOURLY";
+  standardDailyHours: number;
+}
+export interface MissingHoursRow {
+  employeeId: string;
+  employeeName: string;
+  employeeCode: string;
+  workDate: string;
+}
+export interface MissingHours {
+  count: number;
+  rows: MissingHoursRow[];
 }
 export interface Employee {
   _id: string;

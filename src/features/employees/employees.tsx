@@ -775,24 +775,6 @@ function EmployeeForm({
           )}
         </div>
         <div className="form-actions">
-          {employee && employee.email && (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() =>
-                mutate(
-                  `/users/${employee.userId}/invitations/resend`,
-                  "POST",
-                  {},
-                )
-                  .then(() => toast("Invitation queued."))
-                  .catch((e) => toast(e.message, true))
-              }
-            >
-              <Mail size={14} />
-              Resend invite
-            </Button>
-          )}
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>

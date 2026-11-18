@@ -1,9 +1,8 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DateTime } from "luxon";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
-  CalendarDays,
   Check,
   CheckCircle2,
   Clock3,
@@ -21,7 +20,9 @@ import {
   Button,
   Empty,
   ErrorState,
+  Field,
   Loading,
+  Modal,
   Notice,
   PageHeading,
   Pagination,
@@ -29,7 +30,7 @@ import {
   Select,
 } from "@/components/ui";
 import { dateNow, dateLabel, label, time, money } from "@/lib/format";
-import { download, mutate, queryString } from "@/lib/api";
+import { api, download, mutate, queryString } from "@/lib/api";
 import type { AttendanceRow, AuthUser, MissingHours } from "@/types";
 
 export default function Attendance({
@@ -43,7 +44,16 @@ export default function Attendance({
     // The team register opens on the people who still need a mark.
     [status, setStatus] = useState(self ? "" : "PENDING"),
     [search, setSearch] = useState(""),
-    [page, setPage] = useState(1);
+    [page, setPage] = useState(1),
+    // The school-register grid is the default team view.
+    [view, setView] = useState<"MONTHLY" | "WEEKLY" | "DAY">("MONTHLY"),
+    [hoursTarget, setHoursTarget] = useState<{
+      employee: AttendanceRow;
+      workDate: string;
+      value: string;
+    } | null>(null),
+    [savingHours, setSavingHours] = useState(false),
+    [busyCell, setBusyCell] = useState("");
   const toast = useToast(),
     client = useQueryClient(),
     p = user.effectivePermissions,
@@ -63,16 +73,83 @@ export default function Attendance({
       ? user.employeeId || "000000000000000000000000"
       : undefined,
   });
-  const query = useData<AttendanceRow[]>(`/attendance?${filters}`);
+  const query = useData<AttendanceRow[]>(`/attendance?${filters}`, self);
   const canMark = !self && p.canMarkTeamAttendance;
   const missing = useData<MissingHours>(
     `/attendance/missing-hours?${queryString({ from: missingFrom, to: yesterday })}`,
     canMark && Boolean(yesterday),
   );
-  const summary = query.data?.meta?.summary;
   const missingDays = [
     ...new Set(missing.data?.data.rows.map((row) => row.workDate) || []),
   ];
+  // Every team view uses the register grid; the view only picks the range.
+  const grid = !self;
+  const range = useMemo(() => {
+    const anchor = DateTime.fromISO(date);
+    if (view === "DAY")
+      return { from: date, to: date, days: [date], label: date };
+    if (view === "WEEKLY") {
+      const start = anchor.startOf("week");
+      return {
+        from: start.toISODate() || date,
+        to: anchor.endOf("week").toISODate() || date,
+        days: Array.from(
+          { length: 7 },
+          (_, index) => start.plus({ days: index }).toISODate() || date,
+        ),
+        label: `${start.toFormat("d LLL")} – ${start.plus({ days: 6 }).toFormat("d LLL yyyy")}`,
+      };
+    }
+    const start = anchor.startOf("month");
+    return {
+      from: start.toISODate() || date,
+      to: anchor.endOf("month").toISODate() || date,
+      days: Array.from(
+        { length: anchor.daysInMonth || 30 },
+        (_, index) => start.plus({ days: index }).toISODate() || date,
+      ),
+      label: start.toFormat("LLLL yyyy"),
+    };
+  }, [date, view]);
+  // Future days stay visible in the grid but cannot carry a mark yet.
+  const fetchTo = grid && range.to > today ? today : range.to;
+  // One day gives the active roster (unmarked people included); each person's
+  // range is then fetched separately so a month never hits the page limit.
+  const roster = useData<AttendanceRow[]>(
+    `/attendance?from=${fetchTo}&to=${fetchTo}&limit=100`,
+    grid,
+  );
+  const employees = roster.data?.data || [];
+  const rangeQueries = useQueries({
+    queries: employees.map((employee) => {
+      const path = `/attendance?from=${range.from}&to=${fetchTo}&employeeId=${employee.employeeId}&limit=100`;
+      return {
+        queryKey: [path],
+        queryFn: () => api<AttendanceRow[]>(path),
+        enabled: grid,
+        retry: false,
+        staleTime: 15000,
+      };
+    }),
+  });
+  const records = useMemo(() => {
+    const map = new Map<string, AttendanceRow>();
+    for (const result of rangeQueries)
+      for (const row of result.data?.data || [])
+        map.set(`${row.employeeId}|${row.workDate}`, row);
+    return map;
+  }, [rangeQueries]);
+  const gridPending =
+    grid &&
+    (roster.isPending || rangeQueries.some((result) => result.isPending));
+  const term = search.trim().toLowerCase();
+  const gridRows = employees.filter(
+    (employee) =>
+      !term ||
+      [employee.employeeName, employee.employeeCode, employee.email].some(
+        (value) => value?.toLowerCase().includes(term),
+      ),
+  );
   async function quickMark(
     row: AttendanceRow,
     next: "PRESENT" | "ABSENT",
@@ -108,6 +185,80 @@ export default function Attendance({
       return false;
     }
   }
+  function cellTarget(employee: AttendanceRow, workDate: string) {
+    const record = records.get(`${employee.employeeId}|${workDate}`);
+    return (
+      record || {
+        ...employee,
+        workDate,
+        status: "UNMARKED",
+        version: 0,
+      }
+    );
+  }
+  async function cycleCell(employee: AttendanceRow, workDate: string) {
+    const key = `${employee.employeeId}|${workDate}`;
+    if (!canMark || workDate > today || busyCell || hoursTarget) return;
+    const record = records.get(key);
+    // A saved mark cycles A ↔ P; hourly Present days reopen the hours editor.
+    if (record?.status === "PRESENT") {
+      if (employee.payType === "HOURLY") {
+        setHoursTarget({
+          employee,
+          workDate,
+          value: record.regularMinutes
+            ? String(Number((record.regularMinutes / 60).toFixed(2)))
+            : "",
+        });
+        return;
+      }
+      setBusyCell(key);
+      await quickMark(cellTarget(employee, workDate), "ABSENT");
+      setBusyCell("");
+      return;
+    }
+    if (employee.payType === "HOURLY") {
+      setHoursTarget({
+        employee,
+        workDate,
+        value: record?.regularMinutes
+          ? String(Number((record.regularMinutes / 60).toFixed(2)))
+          : String(employee.standardDailyHours || 8),
+      });
+      return;
+    }
+    setBusyCell(key);
+    await quickMark(cellTarget(employee, workDate), "PRESENT");
+    setBusyCell("");
+  }
+  async function saveCellHours(skip = false) {
+    if (!hoursTarget) return;
+    const { employee, workDate, value } = hoursTarget;
+    const parsed = Number(value.trim());
+    setSavingHours(true);
+    const saved = await quickMark(
+      cellTarget(employee, workDate),
+      "PRESENT",
+      !skip && value.trim() && Number.isFinite(parsed) && parsed > 0
+        ? parsed
+        : undefined,
+    );
+    setSavingHours(false);
+    if (saved) setHoursTarget(null);
+  }
+  async function markAbsentFromHours() {
+    if (!hoursTarget) return;
+    setSavingHours(true);
+    const saved = await quickMark(
+      cellTarget(hoursTarget.employee, hoursTarget.workDate),
+      "ABSENT",
+    );
+    setSavingHours(false);
+    if (saved) setHoursTarget(null);
+  }
+  const hoursRecord = hoursTarget
+    ? records.get(`${hoursTarget.employee.employeeId}|${hoursTarget.workDate}`)
+    : undefined;
   return (
     <>
       <PageHeading
@@ -123,8 +274,10 @@ export default function Attendance({
             variant="secondary"
             onClick={() =>
               download(
-                `/reports/attendance/export?${filters}&format=csv`,
-                `Attendance_${date}.csv`,
+                grid
+                  ? `/reports/attendance/export?${queryString({ from: range.from, to: fetchTo, format: "csv" })}`
+                  : `/reports/attendance/export?${filters}&format=csv`,
+                `Attendance_${grid ? range.label.replace(/\s+/g, "_") : date}.csv`,
               ).catch((e) => toast(e.message, true))
             }
           >
@@ -132,7 +285,15 @@ export default function Attendance({
             Export CSV
           </Button>
         )}
-        <Button variant="secondary" onClick={() => query.refetch()}>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            if (grid) {
+              void roster.refetch();
+              for (const result of rangeQueries) void result.refetch();
+            } else void query.refetch();
+          }}
+        >
           <RefreshCw size={14} />
           Refresh
         </Button>
@@ -142,24 +303,27 @@ export default function Attendance({
           <PunchCard user={user} />
         </div>
       )}
-      {!self && summary && (
-        <div className="stats-grid">
-          {[
-            ["Present", summary.present, "green"],
-            ["Absent", summary.absent, ""],
-            ["On leave", summary.leave, ""],
-            ["Unmarked", summary.unmarked, ""],
-          ].map(([name, value, color]) => (
-            <div className="stat-card" key={name}>
-              <div className="stat-top">
-                {name}
-                <CalendarDays size={15} />
-              </div>
-              <h3 className={String(color)}>
-                {String(value).padStart(2, "0")}
-              </h3>
-              <div className="stat-bottom">{dateLabel(date)}</div>
-            </div>
+      {!self && (
+        <div className="tabs" aria-label="Attendance view">
+          {(
+            [
+              ["MONTHLY", "Monthly"],
+              ["WEEKLY", "Weekly"],
+              ["DAY", "Day"],
+            ] as const
+          ).map(([id, text]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={view === id}
+              className={view === id ? "active" : ""}
+              onClick={() => {
+                setView(id);
+                setPage(1);
+              }}
+            >
+              {text}
+            </button>
           ))}
         </div>
       )}
@@ -180,6 +344,7 @@ export default function Attendance({
                 style={{ minHeight: 27, padding: "4px 9px", fontSize: 10 }}
                 onClick={() => {
                   setDate(day);
+                  setView("DAY");
                   setPage(1);
                 }}
               >
@@ -203,35 +368,83 @@ export default function Attendance({
               }}
             />
           )}
-          <input
-            type="date"
-            aria-label="Attendance date"
-            value={date}
-            max={dateNow(user.company.timezone)}
-            onChange={(e) => {
-              setDate(e.target.value);
-              setPage(1);
-            }}
-          />
-          <Select
-            compact
-            ariaLabel="Filter attendance status"
-            value={status}
-            onChange={(v) => {
-              setStatus(v);
-              setPage(1);
-            }}
-            options={[
-              { value: "PENDING", label: "Pending" },
-              { value: "PRESENT", label: "Present" },
-              { value: "ABSENT", label: "Absent" },
-              { value: "", label: "All statuses" },
-            ]}
-          />
+          {view === "MONTHLY" && !self ? (
+            <input
+              type="month"
+              aria-label="Attendance month"
+              value={date.slice(0, 7)}
+              max={today.slice(0, 7)}
+              onChange={(e) => {
+                if (!e.target.value) return;
+                setDate(`${e.target.value}-01`);
+                setPage(1);
+              }}
+            />
+          ) : view === "WEEKLY" && !self ? (
+            <input
+              type="date"
+              aria-label="Week containing date"
+              value={date}
+              max={today}
+              onChange={(e) => {
+                if (!e.target.value) return;
+                setDate(e.target.value);
+                setPage(1);
+              }}
+            />
+          ) : (
+            <input
+              type="date"
+              aria-label="Attendance date"
+              value={date}
+              max={today}
+              onChange={(e) => {
+                if (!e.target.value) return;
+                setDate(e.target.value);
+                setPage(1);
+              }}
+            />
+          )}
+          {view === "WEEKLY" && !self && <small>{range.label}</small>}
+          {self && (
+            <Select
+              compact
+              ariaLabel="Filter attendance status"
+              value={status}
+              onChange={(v) => {
+                setStatus(v);
+                setPage(1);
+              }}
+              options={[
+                { value: "PENDING", label: "Pending" },
+                { value: "PRESENT", label: "Present" },
+                { value: "ABSENT", label: "Absent" },
+                { value: "", label: "All statuses" },
+              ]}
+            />
+          )}
           <span className="toolbar-spacer" />
           <small>{user.company.timezone}</small>
         </div>
-        {query.isPending ? (
+        {grid ? (
+          gridPending ? (
+            <Loading />
+          ) : roster.error ? (
+            <ErrorState error={roster.error} retry={() => roster.refetch()} />
+          ) : !gridRows.length ? (
+            <Empty />
+          ) : (
+            <RegisterGrid
+              rows={gridRows}
+              days={range.days}
+              records={records}
+              today={today}
+              canMark={canMark}
+              busyCell={busyCell}
+              onCycle={cycleCell}
+            />
+          )
+        ) : query.isPending ? (
           <Loading />
         ) : query.error ? (
           <ErrorState error={query.error} retry={() => query.refetch()} />
@@ -245,7 +458,7 @@ export default function Attendance({
             showDate={self}
           />
         )}
-        {query.data?.meta && (
+        {!grid && query.data?.meta && (
           <Pagination
             page={page}
             total={query.data.meta.total}
@@ -253,6 +466,77 @@ export default function Attendance({
           />
         )}
       </section>
+      {hoursTarget && (
+        <Modal
+          title={`Hours for ${hoursTarget.employee.employeeName}`}
+          description={`${dateLabel(hoursTarget.workDate)} · ${hoursTarget.employee.employeeCode}`}
+          onClose={() => {
+            if (!savingHours) setHoursTarget(null);
+          }}
+        >
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveCellHours();
+            }}
+          >
+            <div className="form-body">
+              <Field
+                label="Hours worked"
+                hint={`Optional · up to ${hoursTarget.employee.standardDailyHours || 8} hours. Skip hours saves Present without them.`}
+              >
+                <input
+                  type="number"
+                  min="0.25"
+                  max={hoursTarget.employee.standardDailyHours || 8}
+                  step="0.25"
+                  autoFocus
+                  placeholder="Optional"
+                  value={hoursTarget.value}
+                  onChange={(e) =>
+                    setHoursTarget({ ...hoursTarget, value: e.target.value })
+                  }
+                />
+              </Field>
+            </div>
+            <div className="form-actions">
+              {hoursRecord?.status === "PRESENT" && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="mr-auto text-danger"
+                  disabled={savingHours}
+                  onClick={() => void markAbsentFromHours()}
+                >
+                  Mark absent
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={savingHours}
+                onClick={() => setHoursTarget(null)}
+              >
+                Cancel
+              </Button>
+              {hoursRecord?.status !== "PRESENT" && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={savingHours}
+                  onClick={() => void saveCellHours(true)}
+                >
+                  Skip hours
+                </Button>
+              )}
+              <Button busy={savingHours}>
+                <Check size={15} />
+                Save hours
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </>
   );
 }
@@ -346,6 +630,169 @@ export function AttendanceTable({
                   <QuickMark row={row} onMark={onQuickMark} />
                 </td>
               )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+function hoursLabel(minutes: number) {
+  const hours = Math.round((minutes / 60) * 10) / 10;
+  return Number.isInteger(hours) ? String(hours) : hours.toFixed(1);
+}
+function RegisterGrid({
+  rows,
+  days,
+  records,
+  today,
+  canMark,
+  busyCell,
+  onCycle,
+}: {
+  rows: AttendanceRow[];
+  days: string[];
+  records: Map<string, AttendanceRow>;
+  today: string;
+  canMark: boolean;
+  busyCell: string;
+  onCycle: (employee: AttendanceRow, workDate: string) => void;
+}) {
+  const totals = new Map<string, { present: number; minutes: number }>();
+  for (const employee of rows) {
+    let present = 0,
+      minutes = 0;
+    for (const day of days) {
+      const record = records.get(`${employee.employeeId}|${day}`);
+      if (!record) continue;
+      if (record.status === "PRESENT") present += 1;
+      minutes +=
+        record.regularMinutes || Math.round((record.totalHours || 0) * 60);
+    }
+    totals.set(employee.employeeId, { present, minutes });
+  }
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th className="sticky left-0 z-[2] w-[180px] min-w-[180px] bg-[#fafbf9]">
+              Employee
+            </th>
+            {days.map((day) => {
+              const current = DateTime.fromISO(day);
+              return (
+                <th
+                  key={day}
+                  className={`w-[38px] min-w-[38px] px-0 py-[7px] text-center ${
+                    current.weekday > 5 ? "bg-[#f3f5f2]" : ""
+                  }`}
+                >
+                  <div className="text-[11px] font-semibold">{current.day}</div>
+                  <div className="text-[8px] font-normal tracking-normal text-[#9aa49b]">
+                    {current.toFormat("ccc")}
+                  </div>
+                </th>
+              );
+            })}
+            <th aria-hidden className="p-0" />
+            <th className="sticky right-0 z-[2] w-[92px] min-w-[92px] bg-[#fafbf9] px-[10px] text-center">
+              Total
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((employee, index) => (
+            <tr key={employee.employeeId}>
+              <td className="sticky left-0 z-[1] w-[180px] min-w-[180px] bg-white">
+                <div className="person">
+                  <Avatar name={employee.employeeName} index={index} />
+                  <div>
+                    <strong>{employee.employeeName}</strong>
+                    <small>{employee.employeeCode}</small>
+                  </div>
+                </div>
+              </td>
+              {days.map((day) => {
+                const key = `${employee.employeeId}|${day}`,
+                  record = records.get(key),
+                  status = record?.status,
+                  future = day > today,
+                  present = status === "PRESENT",
+                  absent = status === "ABSENT",
+                  mark = present
+                    ? "P"
+                    : absent
+                      ? "A"
+                      : status === "HALF_DAY"
+                        ? "½"
+                        : status === "LEAVE"
+                          ? "L"
+                          : status === "HOLIDAY"
+                            ? "H"
+                            : "–",
+                  hoursMissing =
+                    present &&
+                    employee.payType === "HOURLY" &&
+                    !record?.regularMinutes;
+                return (
+                  <td key={day} className="px-[3px] py-[4px] text-center">
+                    <button
+                      type="button"
+                      disabled={!canMark || future || busyCell === key}
+                      aria-label={`${employee.employeeName} · ${dateLabel(day)} · ${status ? label(status) : "Unmarked"}`}
+                      title={`${dateLabel(day)} · ${status ? label(status) : "Unmarked"}${hoursMissing ? " · hours missing" : ""}`}
+                      onClick={() => onCycle(employee, day)}
+                      className={`relative mx-auto grid size-[34px] place-items-center rounded-[7px] border text-[11px] font-extrabold transition ${
+                        future
+                          ? "cursor-not-allowed border-transparent text-[#cfd6cf]"
+                          : present
+                            ? "border-ok bg-ok text-white shadow-sm hover:opacity-90"
+                            : absent
+                              ? "border-bad bg-bad text-white shadow-sm hover:opacity-90"
+                              : status
+                                ? "border-warn/40 bg-warn/10 text-warn hover:opacity-90"
+                                : "border-transparent text-[#b9c2ba] hover:border-ok-soft hover:bg-ok-soft hover:text-ok"
+                      }`}
+                    >
+                      {mark}
+                      {hoursMissing && (
+                        <span className="absolute right-[3px] top-[3px] size-[5px] rounded-full bg-white ring-1 ring-warn" />
+                      )}
+                    </button>
+                  </td>
+                );
+              })}
+              <td aria-hidden className="p-0" />
+              <td className="sticky right-0 z-[1] w-[92px] min-w-[92px] bg-white px-[10px] text-center">
+                {employee.payType === "HOURLY" ? (
+                  <div
+                    className="text-[11px] font-semibold text-[#33413a]"
+                    title="Total hours worked in this view"
+                  >
+                    {hoursLabel(totals.get(employee.employeeId)?.minutes || 0)}{" "}
+                    h
+                  </div>
+                ) : (
+                  <>
+                    <div
+                      className="text-[11px] font-semibold text-ok"
+                      title="Present days in this view"
+                    >
+                      {totals.get(employee.employeeId)?.present || 0} d
+                    </div>
+                    <div
+                      className="text-[9px] text-[#8b958e]"
+                      title="Approved or worked hours in this view"
+                    >
+                      {hoursLabel(
+                        totals.get(employee.employeeId)?.minutes || 0,
+                      )}{" "}
+                      h
+                    </div>
+                  </>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

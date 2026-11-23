@@ -3,7 +3,6 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   LockKeyhole,
-  UserPlus,
   ShieldCheck,
   SlidersHorizontal,
   Mail,
@@ -15,7 +14,6 @@ import {
   Button,
   Empty,
   ErrorState,
-  Field,
   Loading,
   Modal,
   Notice,
@@ -27,7 +25,7 @@ import { mutate } from "@/lib/api";
 import { label } from "@/lib/format";
 import type { Account, Permission, RolePolicy } from "@/types";
 
-const descriptions: Record<Permission, [string, string]> = {
+const descriptions = {
   canLogin: ["Sign in", "Access to the workspace"],
   canTakeSelfAttendance: ["Self attendance", "Check in and out for yourself"],
   canMarkTeamAttendance: ["Team attendance", "Mark and edit team records"],
@@ -39,18 +37,18 @@ const descriptions: Record<Permission, [string, string]> = {
     "Salary information",
     "View compensation and payroll impact",
   ],
-  canConfigureCronEOD: ["EOD automation", "Configure scheduled email reports"],
-  canManageRights: ["Manage permissions", "Change role policies and overrides"],
   canManageEmployees: [
     "Manage employees",
     "Create, update, and deactivate profiles",
   ],
-};
+} satisfies Partial<Record<Permission, [string, string]>>;
+
+type DisplayedPermission = keyof typeof descriptions;
+
 export default function Rights() {
   const [tab, setTab] = useState("roles"),
     [page, setPage] = useState(1),
     [selected, setSelected] = useState<Account | null>(null),
-    [invite, setInvite] = useState(false),
     [busy, setBusy] = useState(false);
   const policies = useData<RolePolicy[]>("/roles"),
     accounts = useData<Account[]>(`/users?page=${page}&limit=10`);
@@ -74,17 +72,11 @@ export default function Rights() {
       <PageHeading
         title="Access, with intention"
         description="The right permissions for the right people."
-      >
-        {/* <Button onClick={() => setInvite(true)}>
-          <UserPlus size={15} />
-          Invite account
-        </Button> */}
-      </PageHeading>
+      />
       <Notice>
         <ShieldCheck size={15} style={{ display: "inline" }} /> Fixed
-        permissions protect your workspace. Employee self-view and client
-        assignment limits always apply; permissions never override those
-        boundaries.
+        permissions protect your workspace. Employees can only view their own
+        attendance and payroll records.
       </Notice>
       <div className="tabs">
         <button
@@ -111,19 +103,17 @@ export default function Rights() {
               <thead>
                 <tr>
                   <th>Permission</th>
-                  {policies.data?.data
-                    .filter((p) => (p.role as string) !== "CUSTOMER")
-                    .map((policy) => (
-                      <th key={policy.role} style={{ textAlign: "center" }}>
-                        {label(policy.role)}
-                      </th>
-                    ))}
+                  {policies.data?.data.map((policy) => (
+                    <th key={policy.role} style={{ textAlign: "center" }}>
+                      {label(policy.role)}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {(
                   Object.entries(descriptions) as [
-                    Permission,
+                    DisplayedPermission,
                     [string, string],
                   ][]
                 ).map(([key, [name, description]]) => (
@@ -134,10 +124,8 @@ export default function Rights() {
                         {description}
                       </small>
                     </td>
-                    {policies.data?.data
-                      .filter((p) => (p.role as string) !== "CUSTOMER")
-                      .map((policy) => (
-                        <td key={policy.role} style={{ textAlign: "center" }}>
+                    {policies.data?.data.map((policy) => (
+                      <td key={policy.role} style={{ textAlign: "center" }}>
                         {policy.configurable.includes(key) ? (
                           <input
                             type="checkbox"
@@ -254,7 +242,7 @@ export default function Rights() {
               Use Inherit to follow the role policy. Overrides take effect
               immediately.
             </Notice>
-            {(Object.keys(descriptions) as Permission[])
+            {(Object.keys(descriptions) as DisplayedPermission[])
               .filter((key) =>
                 policies.data?.data
                   .find((p) => p.role === selected.role)
@@ -361,70 +349,6 @@ export default function Rights() {
               )}
             </div>
           </div>
-        </Modal>
-      )}
-      {invite && (
-        <Modal
-          title="Invite someone in"
-          description="They’ll receive a secure link to set their password."
-          onClose={() => setInvite(false)}
-        >
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setBusy(true);
-              const form = new FormData(e.currentTarget);
-              try {
-                await mutate("/users/invitations", "POST", {
-                  name: form.get("name"),
-                  email: form.get("email"),
-                  role: form.get("role"),
-                });
-                await client.invalidateQueries();
-                toast("Account created and invitation queued.");
-                setInvite(false);
-              } catch (error) {
-                toast((error as Error).message, true);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            <div className="form-body stack">
-              <Field label="Full name">
-                <input name="name" required maxLength={120} />
-              </Field>
-              <Field label="Email address">
-                <input name="email" type="email" required />
-              </Field>
-              <Field label="Role">
-                <Select
-                  name="role"
-                  ariaLabel="Role"
-                  defaultValue="EMPLOYEE"
-                  options={[
-                    { value: "EMPLOYEE", label: "Employee" },
-                    { value: "HR", label: "HR Manager" },
-                    { value: "ADMIN", label: "Administrator" },
-                  ]}
-                />
-              </Field>
-              <small>
-                Employee accounts also need a linked employee profile before
-                recording attendance.
-              </small>
-            </div>
-            <div className="form-actions">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setInvite(false)}
-              >
-                Cancel
-              </Button>
-              <Button busy={busy}>Send invitation</Button>
-            </div>
-          </form>
         </Modal>
       )}
     </>

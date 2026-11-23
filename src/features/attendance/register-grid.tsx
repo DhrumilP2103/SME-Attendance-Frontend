@@ -15,6 +15,7 @@ export function RegisterGrid({
   canMark = false,
   busyCell = "",
   onCycle,
+  onEditHours,
   onShowOt,
 }: {
   rows: AttendanceRow[];
@@ -24,6 +25,7 @@ export function RegisterGrid({
   canMark?: boolean;
   busyCell?: string;
   onCycle?: (employee: AttendanceRow, workDate: string) => void;
+  onEditHours?: (employee: AttendanceRow, workDate: string) => void;
   onShowOt?: (
     employee: AttendanceRow,
     workDate: string,
@@ -110,7 +112,7 @@ export function RegisterGrid({
                   record = records.get(key),
                   status = record?.status,
                   saving = busyCell === key,
-                  future = day > today,
+                  outsideEmployment = day > today || Boolean(employee.joiningDate && day < employee.joiningDate),
                   present = status === "PRESENT",
                   absent = status === "ABSENT",
                   isOt = Boolean(record?.isOvertime),
@@ -131,50 +133,65 @@ export function RegisterGrid({
                     !record?.regularMinutes;
                 return (
                   <td key={day} className="px-[3px] py-[4px] text-center">
-                    <Cell
-                      type={onCycle ? "button" : undefined}
-                      disabled={onCycle ? !canMark || future || saving : undefined}
-                      aria-busy={saving}
-                      aria-label={`${employee.employeeName} · ${dateLabel(day)} · ${status ? label(status) : "Unmarked"}${isOt ? " · Overtime" : ""}`}
-                      title={`${dateLabel(day)} · ${status ? label(status) : "Unmarked"}${isOt ? record?.otHours === undefined ? " · Overtime" : ` · OT: ${record.otHours} hrs` : ""}${hoursMissing ? " · hours missing" : ""}`}
-                      onClick={onCycle && (() => {
-                        if (isOt && record) {
-                          onShowOt?.(employee, day, record);
-                        } else {
-                          onCycle(employee, day);
-                        }
-                      })}
-                      className={`relative mx-auto grid size-[34px] place-items-center rounded-[7px] border text-[11px] font-extrabold transition ${
-                        future
-                          ? `border-transparent text-[#cfd6cf] ${onCycle ? "cursor-not-allowed" : ""}`
-                          : isOt
-                            ? `border-amber-500 ${present ? "bg-ok text-white" : "bg-warn/20 text-warn"} shadow-sm ring-2 ring-amber-500/80 ring-offset-1 enabled:hover:opacity-90`
-                            : present
-                              ? "border-ok bg-ok text-white shadow-sm enabled:hover:opacity-90"
-                              : absent
-                                ? "border-bad bg-bad text-white shadow-sm enabled:hover:opacity-90"
-                                : status
-                                  ? "border-warn/40 bg-warn/10 text-warn enabled:hover:opacity-90"
-                                  : "border-transparent text-[#b9c2ba] enabled:hover:border-ok-soft enabled:hover:bg-ok-soft enabled:hover:text-ok"
-                      }`}
-                    >
-                      {saving ? (
-                        <Loader2 size={15} className="spin" aria-hidden="true" />
-                      ) : (
-                        mark
-                      )}
-                      {isOt && (
-                        <span
-                          className="absolute -top-[5px] -right-[5px] z-[2] rounded-full bg-amber-500 text-white px-[4px] py-[0.5px] text-[7.5px] font-black tracking-wider shadow-sm ring-1 ring-white"
-                          title={record?.otHours === undefined ? "Overtime" : `OT: ${record.otHours} hrs`}
-                        >
-                          OT
-                        </span>
-                      )}
+                    <div className="relative isolate mx-auto size-[34px]">
+                      <Cell
+                        type={onCycle ? "button" : undefined}
+                        disabled={onCycle ? !canMark || outsideEmployment || saving : undefined}
+                        aria-busy={saving}
+                        aria-label={`${employee.employeeName} · ${dateLabel(day)} · ${status ? label(status) : "Unmarked"}${isOt ? " · Overtime" : ""}`}
+                        title={`${dateLabel(day)} · ${status ? label(status) : "Unmarked"}${isOt ? record?.otHours === undefined ? " · Overtime" : ` · OT: ${record.otHours} hrs` : ""}${hoursMissing ? " · hours missing" : ""}`}
+                        onClick={onCycle && (() => {
+                          if (isOt && record) {
+                            onShowOt?.(employee, day, record);
+                          } else {
+                            onCycle(employee, day);
+                          }
+                        })}
+                        className={`relative mx-auto grid size-[34px] place-items-center rounded-[7px] border text-[11px] font-extrabold transition ${
+                          outsideEmployment
+                            ? `border-transparent text-[#cfd6cf] ${onCycle ? "cursor-not-allowed" : ""}`
+                            : isOt
+                              ? `border-amber-500 ${present ? "bg-ok text-white" : "bg-warn/20 text-warn"} shadow-sm ring-2 ring-amber-500/80 ring-offset-1 enabled:hover:opacity-90`
+                              : present
+                                ? "border-ok bg-ok text-white shadow-sm enabled:hover:opacity-90"
+                                : absent
+                                  ? "border-bad bg-bad text-white shadow-sm enabled:hover:opacity-90"
+                                  : status
+                                    ? "border-warn/40 bg-warn/10 text-warn enabled:hover:opacity-90"
+                                    : "border-transparent text-[#b9c2ba] enabled:hover:border-ok-soft enabled:hover:bg-ok-soft enabled:hover:text-ok"
+                        }`}
+                      >
+                        {saving ? (
+                          <Loader2 size={15} className="spin" aria-hidden="true" />
+                        ) : (
+                          mark
+                        )}
+                        {isOt && (
+                          <span
+                            className="absolute -top-[5px] -right-[5px] z-[2] rounded-full bg-amber-500 text-white px-[4px] py-[0.5px] text-[7.5px] font-black tracking-wider shadow-sm ring-1 ring-white"
+                            title={record?.otHours === undefined ? "Overtime" : `OT: ${record.otHours} hrs`}
+                          >
+                            OT
+                          </span>
+                        )}
+                      </Cell>
                       {hoursMissing && !isOt && (
-                        <span className="absolute right-[3px] top-[3px] size-[5px] rounded-full bg-white ring-1 ring-warn" />
+                        canMark && !outsideEmployment && onEditHours ? (
+                          <button
+                            type="button"
+                            disabled={saving}
+                            aria-label={`Enter hours for ${employee.employeeName} on ${dateLabel(day)}`}
+                            title="Enter missing hours"
+                            className="absolute top-0 right-0 grid size-4 place-items-center rounded-full"
+                            onClick={() => onEditHours(employee, day)}
+                          >
+                            <span className="size-[5px] rounded-full bg-white ring-1 ring-warn" />
+                          </button>
+                        ) : (
+                          <span className="pointer-events-none absolute top-[5px] right-[5px] size-[5px] rounded-full bg-white ring-1 ring-warn" />
+                        )
                       )}
-                    </Cell>
+                    </div>
                   </td>
                 );
               })}

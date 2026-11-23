@@ -54,6 +54,7 @@ export interface AttendanceRow {
   employeeId: string;
   employeeName: string;
   employeeCode: string;
+  joiningDate?: string;
   email: string;
   workDate: string;
   status: string;

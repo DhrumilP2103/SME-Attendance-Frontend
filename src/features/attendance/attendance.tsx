@@ -54,10 +54,6 @@ export default function Attendance({
       employee: AttendanceRow;
       workDate: string;
       value: string;
-      includeOt?: boolean;
-      otHours?: string;
-      otAmount?: string;
-      otRemark?: string;
     } | null>(null),
     [hoursAction, setHoursAction] = useState<
       "save" | "skip" | "absent" | "clear" | null
@@ -65,6 +61,7 @@ export default function Attendance({
     [busyCell, setBusyCell] = useState(""),
     [otModal, setOtModal] = useState<{
       open: boolean;
+      editing?: boolean;
       employeeId?: string;
       workDate?: string;
       regularHours?: number;
@@ -178,19 +175,13 @@ export default function Attendance({
     row: AttendanceRow,
     next: "PRESENT" | "ABSENT",
     hours?: number,
-    ot?: {
-      isOvertime: boolean;
-      otHours?: number;
-      otAmount?: number;
-      otRemark?: string;
-    },
   ) {
     try {
       const payRole = ["ADMIN", "HR"].includes(user.role),
         body: Record<string, unknown> = {
           status: next,
           version: row.version,
-          modificationReason: `Attendance updated: ${label(next).toLowerCase()}${hours !== undefined ? ` · ${hours} regular hrs` : ""}${ot?.isOvertime ? ` · ${ot.otHours} OT hrs` : ""}.`,
+          modificationReason: `Attendance updated: ${label(next).toLowerCase()}${hours !== undefined ? ` · ${hours} regular hrs` : ""}.`,
         };
       if (next === "ABSENT") {
         Object.assign(body, { inTime: null, outTime: null });
@@ -200,23 +191,6 @@ export default function Attendance({
       }
       if (hours !== undefined && payRole)
         body.regularMinutes = Math.round(hours * 60);
-      if (p.canToggleOT && ot) {
-        if (ot.isOvertime) {
-          Object.assign(body, {
-            isOvertime: true,
-            otHours: ot.otHours || 0,
-            otAmount: ot.otAmount || 0,
-            otRemark: ot.otRemark || `Overtime: ${ot.otHours || 0} hrs`,
-          });
-        } else {
-          Object.assign(body, {
-            isOvertime: false,
-            otHours: 0,
-            otAmount: 0,
-            otRemark: "",
-          });
-        }
-      }
       await mutate(
         `/attendance/${row.employeeId}/${row.workDate}`,
         "PUT",
@@ -224,7 +198,7 @@ export default function Attendance({
       );
       await client.invalidateQueries();
       toast(
-        `${row.employeeName} marked ${label(next).toLowerCase()}${hours !== undefined ? ` · ${hours} hrs` : ""}${ot?.isOvertime ? ` · ${ot.otHours} OT hrs` : ""}.`,
+        `${row.employeeName} marked ${label(next).toLowerCase()}${hours !== undefined ? ` · ${hours} hrs` : ""}.`,
       );
       return true;
     } catch (e) {
@@ -243,27 +217,25 @@ export default function Attendance({
       }
     );
   }
+  function openCellHours(employee: AttendanceRow, workDate: string) {
+    if (!canMark || workDate > today || (employee.joiningDate && workDate < employee.joiningDate) || busyCell || hoursTarget) return;
+    const record = records.get(`${employee.employeeId}|${workDate}`);
+    setHoursTarget({
+      employee,
+      workDate,
+      value: record?.regularMinutes
+        ? String(Number((record.regularMinutes / 60).toFixed(2)))
+        : record?.status === "PRESENT"
+          ? ""
+          : String(employee.standardDailyHours || 8),
+    });
+  }
   async function cycleCell(employee: AttendanceRow, workDate: string) {
     const key = `${employee.employeeId}|${workDate}`;
-    if (!canMark || workDate > today || busyCell || hoursTarget) return;
+    if (!canMark || workDate > today || (employee.joiningDate && workDate < employee.joiningDate) || busyCell || hoursTarget) return;
     const record = records.get(key);
-    // The register cycles – → A → P → –; the last tap clears the saved record.
-    if (record?.status === "PRESENT") {
-      // A Present day saved without hours keeps the hours editor within reach.
-      if (employee.payType === "HOURLY" && !record.regularMinutes) {
-        setHoursTarget({
-          employee,
-          workDate,
-          value: "",
-          includeOt: Boolean(record?.isOvertime),
-          otHours: record?.otHours ? String(record.otHours) : "1",
-          otAmount: record?.otAmount
-            ? String(major(record.otAmount, user.company.currency))
-            : "",
-          otRemark: record?.otRemark || "",
-        });
-        return;
-      }
+    // The register cycles – → P → A → –.
+    if (record?.status === "ABSENT") {
       setBusyCell(key);
       try {
         await api(
@@ -271,9 +243,7 @@ export default function Attendance({
           { method: "DELETE" },
         );
         await client.invalidateQueries();
-        toast(
-          `${employee.employeeName} is unmarked on ${dateLabel(workDate)}.`,
-        );
+        toast(`${employee.employeeName} is unmarked on ${dateLabel(workDate)}.`);
       } catch (e) {
         toast((e as Error).message, true);
       } finally {
@@ -281,87 +251,23 @@ export default function Attendance({
       }
       return;
     }
-    if (!record || record.status === "UNMARKED") {
-      setBusyCell(key);
-      await quickMark(cellTarget(employee, workDate), "ABSENT");
-      setBusyCell("");
-      return;
-    }
-    if (employee.payType === "HOURLY") {
-      setHoursTarget({
-        employee,
-        workDate,
-        value: record?.regularMinutes
-          ? String(Number((record.regularMinutes / 60).toFixed(2)))
-          : String(employee.standardDailyHours || 8),
-        includeOt: Boolean(record?.isOvertime),
-        otHours: record?.otHours ? String(record.otHours) : "1",
-        otAmount: record?.otAmount
-          ? String(major(record.otAmount, user.company.currency))
-          : "",
-        otRemark: record?.otRemark || "",
-      });
+    const next = record?.status === "PRESENT" ? "ABSENT" : "PRESENT";
+    if (employee.payType === "HOURLY" && (next === "PRESENT" || !record?.regularMinutes)) {
+      openCellHours(employee, workDate);
       return;
     }
     setBusyCell(key);
-    await quickMark(cellTarget(employee, workDate), "PRESENT");
-    setBusyCell("");
+    try {
+      await quickMark(cellTarget(employee, workDate), next);
+    } finally {
+      setBusyCell("");
+    }
   }
   const savingHours = hoursAction !== null;
   async function saveCellHours(skip = false) {
     if (!hoursTarget) return;
-    const {
-      employee,
-      workDate,
-      value,
-      includeOt,
-      otHours,
-      otAmount,
-      otRemark,
-    } = hoursTarget;
+    const { employee, workDate, value } = hoursTarget;
     const parsed = Number(value.trim());
-    let otPayload:
-      | {
-          isOvertime: boolean;
-          otHours?: number;
-          otAmount?: number;
-          otRemark?: string;
-        }
-      | undefined;
-
-    if (p.canToggleOT) {
-      if (includeOt) {
-        const parsedOtHours = Number((otHours || "").trim());
-        if (
-          !Number.isFinite(parsedOtHours) ||
-          parsedOtHours <= 0 ||
-          parsedOtHours > 24
-        ) {
-          toast("Please enter valid OT hours (0.25 to 24).", true);
-          return;
-        }
-        const amtStr = (otAmount || "").trim();
-        const parsedAmt = Number(amtStr);
-        if (!Number.isFinite(parsedAmt) || parsedAmt <= 0) {
-          toast("Please enter a positive OT amount.", true);
-          return;
-        }
-        otPayload = {
-          isOvertime: true,
-          otHours: parsedOtHours,
-          otAmount: minor(amtStr, user.company.currency),
-          otRemark: otRemark?.trim() || `Overtime: ${parsedOtHours} hrs`,
-        };
-      } else if (hoursRecord?.isOvertime) {
-        otPayload = {
-          isOvertime: false,
-          otHours: 0,
-          otAmount: 0,
-          otRemark: "",
-        };
-      }
-    }
-
     setHoursAction(skip ? "skip" : "save");
     const saved = await quickMark(
       cellTarget(employee, workDate),
@@ -369,7 +275,6 @@ export default function Attendance({
       !skip && value.trim() && Number.isFinite(parsed) && parsed > 0
         ? parsed
         : undefined,
-      otPayload,
     );
     setHoursAction(null);
     if (saved) setHoursTarget(null);
@@ -636,6 +541,7 @@ export default function Attendance({
               canMark={canMark}
               busyCell={busyCell}
               onCycle={cycleCell}
+              onEditHours={openCellHours}
               onShowOt={(employee, workDate, record) =>
                 setOtDetails({ employee, workDate, record })
               }
@@ -701,79 +607,6 @@ export default function Attendance({
                   }
                 />
               </Field>
-              {p.canToggleOT && (
-                <div className="rounded-lg border border-line bg-[#f8faf7] p-3 space-y-3">
-                  <label className="flex items-center gap-2 cursor-pointer font-semibold text-[13px] text-[#223028]">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(hoursTarget.includeOt)}
-                      onChange={(e) =>
-                        setHoursTarget({
-                          ...hoursTarget,
-                          includeOt: e.target.checked,
-                          otHours: hoursTarget.otHours || "1",
-                          otAmount: hoursTarget.otAmount || "",
-                        })
-                      }
-                    />
-                    <span>Add Overtime (OT) for this day</span>
-                  </label>
-                  {hoursTarget.includeOt && (
-                    <>
-                      <Field
-                        label="OT Hours"
-                        hint="Hours worked beyond regular shift"
-                      >
-                        <NumberInput
-                          min="0.25"
-                          max={24}
-                          step="0.25"
-                          placeholder="e.g. 2"
-                          value={hoursTarget.otHours || ""}
-                          onChange={(e) =>
-                            setHoursTarget({
-                              ...hoursTarget,
-                              otHours: e.target.value,
-                            })
-                          }
-                          required
-                        />
-                      </Field>
-                      <Field
-                        label={`OT Amount (${user.company.currency})`}
-                        hint={`Direct compensation amount in ${user.company.currency}`}
-                      >
-                        <NumberInput
-                          min="1"
-                          step="1"
-                          placeholder="e.g. 500"
-                          value={hoursTarget.otAmount || ""}
-                          onChange={(e) =>
-                            setHoursTarget({
-                              ...hoursTarget,
-                              otAmount: e.target.value,
-                            })
-                          }
-                          required
-                        />
-                      </Field>
-                      <Field label="OT Remark" hint="Optional note or reason">
-                        <input
-                          type="text"
-                          placeholder={`e.g. Overtime: ${hoursTarget.otHours || "2"} hrs`}
-                          value={hoursTarget.otRemark || ""}
-                          onChange={(e) =>
-                            setHoursTarget({
-                              ...hoursTarget,
-                              otRemark: e.target.value,
-                            })
-                          }
-                        />
-                      </Field>
-                    </>
-                  )}
-                </div>
-              )}
             </div>
             <div className="form-actions">
               {hoursRecord?.status === "PRESENT" && (
@@ -852,6 +685,7 @@ export default function Attendance({
             const rec = otDetails.record;
             setOtModal({
               open: true,
+              editing: true,
               employeeId: otDetails.employee.employeeId,
               workDate: otDetails.workDate,
               regularHours: rec.regularMinutes
@@ -1252,6 +1086,7 @@ function OvertimeModal({
   user: AuthUser;
   employees: AttendanceRow[];
   initialData: {
+    editing?: boolean;
     employeeId?: string;
     workDate?: string;
     regularHours?: number;
@@ -1380,7 +1215,7 @@ function OvertimeModal({
 
   return (
     <Modal
-      title="Add Overtime"
+      title={initialData.editing ? "Edit Overtime" : "Add Overtime"}
       description="Record overtime hours and direct compensation for an employee."
       onClose={() => {
         if (!busy) onClose();
@@ -1394,6 +1229,7 @@ function OvertimeModal({
           >
             <Select
               ariaLabel="Select employee"
+              disabled={initialData.editing}
               value={empId}
               onChange={(newEmpId) => {
                 setEmpId(newEmpId);
@@ -1416,6 +1252,7 @@ function OvertimeModal({
             <input
               type="date"
               max={today}
+              disabled={initialData.editing}
               value={workDate}
               onChange={(e) => {
                 const newDate = e.target.value;

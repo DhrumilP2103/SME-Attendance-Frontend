@@ -48,13 +48,10 @@ export default function Reports({
     [page, setPage] = useState(1),
     [search, setSearch] = useState(""),
     [employeeId, setEmployeeId] = useState(""),
-    [reportType, setReportType] = useState("attendance"),
     [selected, setSelected] = useState<PayRow | null>(null);
   const canFilterEmployee =
     !payroll && user.effectivePermissions.canGenerateReports;
-  const salaryMode = payroll || reportType === "salary";
-  const canSalaryReport =
-    !!user.employeeId || user.effectivePermissions.canViewSalaryImpact;
+  const salaryMode = payroll;
   const people = useData<EmployeeOption[]>(
     `/employees?${queryString({ limit: 100 })}`,
     canFilterEmployee,
@@ -108,10 +105,10 @@ export default function Reports({
           user.effectivePermissions.canExportReports &&
           user.effectivePermissions.canGenerateReports && (
             <ReportExport
-              endpoint={salaryMode ? "/reports/payroll/export" : "/reports/attendance/export"}
-              filters={queryString(salaryMode ? { month, search, employeeId } : filters)}
-              filename={salaryMode ? `Salary_${filenameSuffix}${month}` : `Attendance_${filenameSuffix}${from}_${to}`}
-              disabled={!salaryMode && !validRange}
+              endpoint="/reports/attendance/export"
+              filters={queryString(filters)}
+              filename={`Attendance_${filenameSuffix}${from}_${to}`}
+              disabled={!validRange}
             />
           )}
       </PageHeading>
@@ -163,23 +160,6 @@ export default function Reports({
       )}
       <section className="panel">
         <div className="toolbar report-toolbar">
-          {!payroll && canSalaryReport && (
-            <Select
-              compact
-              ariaLabel="Report type"
-              searchable={false}
-              value={reportType}
-              style={{ width: 150 }}
-              onChange={(v) => {
-                setReportType(v);
-                setPage(1);
-              }}
-              options={[
-                { value: "attendance", label: "Attendance report" },
-                { value: "salary", label: "Salary report" },
-              ]}
-            />
-          )}
           {!payroll && (
             <SearchInput
               value={search}

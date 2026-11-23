@@ -27,6 +27,7 @@ import {
   Field,
   Loading,
   Modal,
+  NumberInput,
   PageHeading,
   Pagination,
   SearchInput,
@@ -644,9 +645,8 @@ function EmployeeForm({
               />
             </Field>
             <Field label="Standard daily hours">
-              <input
+              <NumberInput
                 name="hours"
-                type="number"
                 min="1"
                 max="16"
                 step="0.5"
@@ -655,9 +655,8 @@ function EmployeeForm({
               />
             </Field>
             <Field label="Grace period (minutes)">
-              <input
+              <NumberInput
                 name="grace"
-                type="number"
                 min="0"
                 max="120"
                 defaultValue={employee?.shift?.graceMinutes ?? 15}
@@ -704,9 +703,8 @@ function EmployeeForm({
                 </Field>
                 {payType === "SALARIED" ? (
                   <Field label="Base monthly salary">
-                    <input
+                    <NumberInput
                       name="salary"
-                      type="number"
                       min="0.01"
                       step="0.01"
                       defaultValue={
@@ -720,9 +718,8 @@ function EmployeeForm({
                   </Field>
                 ) : (
                   <Field label="Hourly rate">
-                    <input
+                    <NumberInput
                       name="rate"
-                      type="number"
                       min="0.01"
                       step="0.01"
                       defaultValue={

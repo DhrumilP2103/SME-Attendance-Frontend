@@ -1,5 +1,10 @@
 "use client";
-import { useState, type ReactNode, type ButtonHTMLAttributes } from "react";
+import {
+  useState,
+  type ReactNode,
+  type ButtonHTMLAttributes,
+  type InputHTMLAttributes,
+} from "react";
 import {
   Dialog,
   DialogContent,
@@ -51,9 +56,10 @@ export function Button({
     <button
       {...props}
       disabled={props.disabled || busy}
+      aria-busy={busy || props["aria-busy"]}
       className={`btn btn-${variant} ${className}`}
     >
-      {busy && <Loader2 size={16} className="spin" />}
+      {busy && <Loader2 size={16} className="spin" aria-hidden="true" />}
       {children}
     </button>
   );
@@ -191,18 +197,20 @@ export function Pagination({
   page,
   total,
   limit = 10,
+  itemLabel = "records",
   onChange,
 }: {
   page: number;
   total: number;
   limit?: number;
+  itemLabel?: string;
   onChange: (page: number) => void;
 }) {
   return (
     <div className="pagination">
       <span>
         Showing {total ? (page - 1) * limit + 1 : 0}–
-        {Math.min(page * limit, total)} of {total} records
+        {Math.min(page * limit, total)} of {total} {itemLabel}
       </span>
       <div>
         <Button
@@ -262,6 +270,18 @@ export function Modal({
     </Dialog>
   );
 }
+export function NumberInput(
+  props: Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "onWheel">,
+) {
+  return (
+    <input
+      {...props}
+      type="number"
+      onWheel={(event) => event.currentTarget.blur()}
+    />
+  );
+}
+
 export function Field({
   label: text,
   children,

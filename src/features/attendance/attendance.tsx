@@ -6,9 +6,9 @@ import {
   Check,
   CheckCircle2,
   Clock3,
-  Download,
   LogIn,
   LogOut,
+  Loader2,
   RefreshCw,
   TriangleAlert,
   X,
@@ -23,14 +23,17 @@ import {
   Field,
   Loading,
   Modal,
+  NumberInput,
   Notice,
   PageHeading,
   Pagination,
   SearchInput,
   Select,
 } from "@/components/ui";
-import { dateNow, dateLabel, label, time, money } from "@/lib/format";
-import { api, download, mutate, queryString } from "@/lib/api";
+import { dateNow, dateLabel, label, time, money, major, minor } from "@/lib/format";
+import { api, mutate, queryString } from "@/lib/api";
+import { ReportExport } from "@/features/reports/report-export";
+import { RegisterGrid } from "./register-grid";
 import type { AttendanceRow, AuthUser, MissingHours } from "@/types";
 
 export default function Attendance({
@@ -51,9 +54,30 @@ export default function Attendance({
       employee: AttendanceRow;
       workDate: string;
       value: string;
+      includeOt?: boolean;
+      otHours?: string;
+      otAmount?: string;
+      otRemark?: string;
     } | null>(null),
-    [savingHours, setSavingHours] = useState(false),
-    [busyCell, setBusyCell] = useState("");
+    [hoursAction, setHoursAction] = useState<
+      "save" | "skip" | "absent" | "clear" | null
+    >(null),
+    [busyCell, setBusyCell] = useState(""),
+    [otModal, setOtModal] = useState<{
+      open: boolean;
+      employeeId?: string;
+      workDate?: string;
+      regularHours?: number;
+      otHours?: number;
+      otAmount?: number;
+      otRemark?: string;
+    } | null>(null),
+    [otDetails, setOtDetails] = useState<{
+      employee: AttendanceRow;
+      workDate: string;
+      record: AttendanceRow;
+    } | null>(null),
+    [savingOt, setSavingOt] = useState(false);
   const toast = useToast(),
     client = useQueryClient(),
     p = user.effectivePermissions,
@@ -154,22 +178,45 @@ export default function Attendance({
     row: AttendanceRow,
     next: "PRESENT" | "ABSENT",
     hours?: number,
+    ot?: {
+      isOvertime: boolean;
+      otHours?: number;
+      otAmount?: number;
+      otRemark?: string;
+    },
   ) {
     try {
       const payRole = ["ADMIN", "HR"].includes(user.role),
         body: Record<string, unknown> = {
           status: next,
           version: row.version,
-          modificationReason: `Quick mark from the attendance register: ${label(next).toLowerCase()}.`,
+          modificationReason: `Attendance updated: ${label(next).toLowerCase()}${hours !== undefined ? ` · ${hours} regular hrs` : ""}${ot?.isOvertime ? ` · ${ot.otHours} OT hrs` : ""}.`,
         };
       if (next === "ABSENT") {
         Object.assign(body, { inTime: null, outTime: null });
         if (payRole) body.regularMinutes = 0;
         if (p.canToggleOT)
-          Object.assign(body, { isOvertime: false, otAmount: 0, otRemark: "" });
+          Object.assign(body, { isOvertime: false, otHours: 0, otAmount: 0, otRemark: "" });
       }
       if (hours !== undefined && payRole)
         body.regularMinutes = Math.round(hours * 60);
+      if (p.canToggleOT && ot) {
+        if (ot.isOvertime) {
+          Object.assign(body, {
+            isOvertime: true,
+            otHours: ot.otHours || 0,
+            otAmount: ot.otAmount || 0,
+            otRemark: ot.otRemark || `Overtime: ${ot.otHours || 0} hrs`,
+          });
+        } else {
+          Object.assign(body, {
+            isOvertime: false,
+            otHours: 0,
+            otAmount: 0,
+            otRemark: "",
+          });
+        }
+      }
       await mutate(
         `/attendance/${row.employeeId}/${row.workDate}`,
         "PUT",
@@ -177,7 +224,7 @@ export default function Attendance({
       );
       await client.invalidateQueries();
       toast(
-        `${row.employeeName} marked ${label(next).toLowerCase()}${hours !== undefined ? ` · ${hours} hrs` : ""}.`,
+        `${row.employeeName} marked ${label(next).toLowerCase()}${hours !== undefined ? ` · ${hours} hrs` : ""}${ot?.isOvertime ? ` · ${ot.otHours} OT hrs` : ""}.`,
       );
       return true;
     } catch (e) {
@@ -204,7 +251,17 @@ export default function Attendance({
     if (record?.status === "PRESENT") {
       // A Present day saved without hours keeps the hours editor within reach.
       if (employee.payType === "HOURLY" && !record.regularMinutes) {
-        setHoursTarget({ employee, workDate, value: "" });
+        setHoursTarget({
+          employee,
+          workDate,
+          value: "",
+          includeOt: Boolean(record?.isOvertime),
+          otHours: record?.otHours ? String(record.otHours) : "1",
+          otAmount: record?.otAmount
+            ? String(major(record.otAmount, user.company.currency))
+            : "",
+          otRemark: record?.otRemark || "",
+        });
         return;
       }
       setBusyCell(key);
@@ -237,6 +294,12 @@ export default function Attendance({
         value: record?.regularMinutes
           ? String(Number((record.regularMinutes / 60).toFixed(2)))
           : String(employee.standardDailyHours || 8),
+        includeOt: Boolean(record?.isOvertime),
+        otHours: record?.otHours ? String(record.otHours) : "1",
+        otAmount: record?.otAmount
+          ? String(major(record.otAmount, user.company.currency))
+          : "",
+        otRemark: record?.otRemark || "",
       });
       return;
     }
@@ -244,29 +307,81 @@ export default function Attendance({
     await quickMark(cellTarget(employee, workDate), "PRESENT");
     setBusyCell("");
   }
+  const savingHours = hoursAction !== null;
   async function saveCellHours(skip = false) {
     if (!hoursTarget) return;
-    const { employee, workDate, value } = hoursTarget;
+    const {
+      employee,
+      workDate,
+      value,
+      includeOt,
+      otHours,
+      otAmount,
+      otRemark,
+    } = hoursTarget;
     const parsed = Number(value.trim());
-    setSavingHours(true);
+    let otPayload:
+      | {
+          isOvertime: boolean;
+          otHours?: number;
+          otAmount?: number;
+          otRemark?: string;
+        }
+      | undefined;
+
+    if (p.canToggleOT) {
+      if (includeOt) {
+        const parsedOtHours = Number((otHours || "").trim());
+        if (
+          !Number.isFinite(parsedOtHours) ||
+          parsedOtHours <= 0 ||
+          parsedOtHours > 24
+        ) {
+          toast("Please enter valid OT hours (0.25 to 24).", true);
+          return;
+        }
+        const amtStr = (otAmount || "").trim();
+        const parsedAmt = Number(amtStr);
+        if (!Number.isFinite(parsedAmt) || parsedAmt <= 0) {
+          toast("Please enter a positive OT amount.", true);
+          return;
+        }
+        otPayload = {
+          isOvertime: true,
+          otHours: parsedOtHours,
+          otAmount: minor(amtStr, user.company.currency),
+          otRemark: otRemark?.trim() || `Overtime: ${parsedOtHours} hrs`,
+        };
+      } else if (hoursRecord?.isOvertime) {
+        otPayload = {
+          isOvertime: false,
+          otHours: 0,
+          otAmount: 0,
+          otRemark: "",
+        };
+      }
+    }
+
+    setHoursAction(skip ? "skip" : "save");
     const saved = await quickMark(
       cellTarget(employee, workDate),
       "PRESENT",
       !skip && value.trim() && Number.isFinite(parsed) && parsed > 0
         ? parsed
         : undefined,
+      otPayload,
     );
-    setSavingHours(false);
+    setHoursAction(null);
     if (saved) setHoursTarget(null);
   }
   async function markAbsentFromHours() {
     if (!hoursTarget) return;
-    setSavingHours(true);
+    setHoursAction("absent");
     const saved = await quickMark(
       cellTarget(hoursTarget.employee, hoursTarget.workDate),
       "ABSENT",
     );
-    setSavingHours(false);
+    setHoursAction(null);
     if (saved) setHoursTarget(null);
   }
   async function clearFromHours() {
@@ -277,7 +392,7 @@ export default function Attendance({
       setHoursTarget(null);
       return;
     }
-    setSavingHours(true);
+    setHoursAction("clear");
     try {
       await api(
         `/attendance/${employee.employeeId}/${workDate}?version=${record.version}`,
@@ -289,7 +404,39 @@ export default function Attendance({
     } catch (e) {
       toast((e as Error).message, true);
     } finally {
-      setSavingHours(false);
+      setHoursAction(null);
+    }
+  }
+  async function removeOvertime(target: {
+    employee: AttendanceRow;
+    workDate: string;
+    record: AttendanceRow;
+  }) {
+    setSavingOt(true);
+    try {
+      const body: Record<string, unknown> = {
+        status: target.record.status,
+        isOvertime: false,
+        otHours: 0,
+        otAmount: 0,
+        otRemark: "",
+        modificationReason: "Overtime removed.",
+        version: target.record.version,
+      };
+      await mutate(
+        `/attendance/${target.employee.employeeId}/${target.workDate}`,
+        "PUT",
+        body,
+      );
+      await client.invalidateQueries();
+      toast(
+        `Overtime removed for ${target.employee.employeeName} on ${dateLabel(target.workDate)}.`,
+      );
+      setOtDetails(null);
+    } catch (err) {
+      toast((err as Error).message, true);
+    } finally {
+      setSavingOt(false);
     }
   }
   const hoursRecord = hoursTarget
@@ -306,19 +453,30 @@ export default function Attendance({
         }
       >
         {p.canExportReports && p.canGenerateReports && (
-          <Button
+          <ReportExport
             variant="secondary"
+            label="Export attendance"
+            endpoint="/reports/attendance/export"
+            filters={grid ? queryString({ from: range.from, to: range.to, search }) : filters}
+            filename={`Attendance_${grid ? range.label.replace(/\s+/g, "_") : date}`}
+          />
+        )}
+        {p.canToggleOT && !self && (
+          <Button
+            variant="primary"
             onClick={() =>
-              download(
-                grid
-                  ? `/reports/attendance/export?${queryString({ from: range.from, to: fetchTo, format: "csv" })}`
-                  : `/reports/attendance/export?${filters}&format=csv`,
-                `Attendance_${grid ? range.label.replace(/\s+/g, "_") : date}.csv`,
-              ).catch((e) => toast(e.message, true))
+              setOtModal({
+                open: true,
+                employeeId: employees[0]?.employeeId,
+                workDate: date > today ? today : date,
+                otHours: 1,
+                otAmount: undefined,
+                otRemark: "",
+              })
             }
           >
-            <Download size={15} />
-            Export CSV
+            <Clock3 size={15} />
+            Add Overtime
           </Button>
         )}
         <Button
@@ -478,6 +636,9 @@ export default function Attendance({
               canMark={canMark}
               busyCell={busyCell}
               onCycle={cycleCell}
+              onShowOt={(employee, workDate, record) =>
+                setOtDetails({ employee, workDate, record })
+              }
             />
           )
         ) : query.isPending ? (
@@ -492,6 +653,9 @@ export default function Attendance({
             user={user}
             onQuickMark={canMark ? quickMark : undefined}
             showDate={self}
+            onShowOt={(employee, workDate, record) =>
+              setOtDetails({ employee, workDate, record })
+            }
           />
         )}
         {!grid && query.data?.meta && (
@@ -518,26 +682,98 @@ export default function Attendance({
           >
             <div className="form-body">
               <Field
-                label="Hours worked"
+                label="Regular Working Hours"
                 hint={
                   hoursRecord?.status === "PRESENT"
-                    ? `Hours were skipped for this Present day. Add them now, or mark absent / dash below.`
-                    : `Optional · up to ${hoursTarget.employee.standardDailyHours || 8} hours. Skip hours saves Present without them.`
+                    ? `Hours for this Present day. Standard shift: ${hoursTarget.employee.standardDailyHours || 8} hrs.`
+                    : `Optional · up to ${hoursTarget.employee.standardDailyHours || 8} regular hours. Standard shift: ${hoursTarget.employee.standardDailyHours || 8} hrs.`
                 }
               >
-                <input
-                  type="number"
+                <NumberInput
                   min="0.25"
                   max={hoursTarget.employee.standardDailyHours || 8}
                   step="0.25"
                   autoFocus
-                  placeholder="Optional"
+                  placeholder={`e.g. ${hoursTarget.employee.standardDailyHours || 8}`}
                   value={hoursTarget.value}
                   onChange={(e) =>
                     setHoursTarget({ ...hoursTarget, value: e.target.value })
                   }
                 />
               </Field>
+              {p.canToggleOT && (
+                <div className="rounded-lg border border-line bg-[#f8faf7] p-3 space-y-3">
+                  <label className="flex items-center gap-2 cursor-pointer font-semibold text-[13px] text-[#223028]">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(hoursTarget.includeOt)}
+                      onChange={(e) =>
+                        setHoursTarget({
+                          ...hoursTarget,
+                          includeOt: e.target.checked,
+                          otHours: hoursTarget.otHours || "1",
+                          otAmount: hoursTarget.otAmount || "",
+                        })
+                      }
+                    />
+                    <span>Add Overtime (OT) for this day</span>
+                  </label>
+                  {hoursTarget.includeOt && (
+                    <>
+                      <Field
+                        label="OT Hours"
+                        hint="Hours worked beyond regular shift"
+                      >
+                        <NumberInput
+                          min="0.25"
+                          max={24}
+                          step="0.25"
+                          placeholder="e.g. 2"
+                          value={hoursTarget.otHours || ""}
+                          onChange={(e) =>
+                            setHoursTarget({
+                              ...hoursTarget,
+                              otHours: e.target.value,
+                            })
+                          }
+                          required
+                        />
+                      </Field>
+                      <Field
+                        label={`OT Amount (${user.company.currency})`}
+                        hint={`Direct compensation amount in ${user.company.currency}`}
+                      >
+                        <NumberInput
+                          min="1"
+                          step="1"
+                          placeholder="e.g. 500"
+                          value={hoursTarget.otAmount || ""}
+                          onChange={(e) =>
+                            setHoursTarget({
+                              ...hoursTarget,
+                              otAmount: e.target.value,
+                            })
+                          }
+                          required
+                        />
+                      </Field>
+                      <Field label="OT Remark" hint="Optional note or reason">
+                        <input
+                          type="text"
+                          placeholder={`e.g. Overtime: ${hoursTarget.otHours || "2"} hrs`}
+                          value={hoursTarget.otRemark || ""}
+                          onChange={(e) =>
+                            setHoursTarget({
+                              ...hoursTarget,
+                              otRemark: e.target.value,
+                            })
+                          }
+                        />
+                      </Field>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
             <div className="form-actions">
               {hoursRecord?.status === "PRESENT" && (
@@ -547,6 +783,7 @@ export default function Attendance({
                     variant="secondary"
                     className="text-danger"
                     disabled={savingHours}
+                    busy={hoursAction === "absent"}
                     onClick={() => void markAbsentFromHours()}
                   >
                     Mark absent
@@ -555,6 +792,7 @@ export default function Attendance({
                     type="button"
                     variant="secondary"
                     disabled={savingHours}
+                    busy={hoursAction === "clear"}
                     onClick={() => void clearFromHours()}
                   >
                     Dash (–)
@@ -574,18 +812,63 @@ export default function Attendance({
                   type="button"
                   variant="secondary"
                   disabled={savingHours}
+                  busy={hoursAction === "skip"}
                   onClick={() => void saveCellHours(true)}
                 >
                   Skip hours
                 </Button>
               )}
-              <Button busy={savingHours}>
+              <Button busy={hoursAction === "save"} disabled={savingHours}>
                 <Check size={15} />
                 Save hours
               </Button>
             </div>
           </form>
         </Modal>
+      )}
+      {otModal && (
+        <OvertimeModal
+          user={user}
+          employees={employees}
+          initialData={otModal}
+          records={records}
+          onClose={() => setOtModal(null)}
+          onSuccess={(empName, dt) => {
+            setOtModal(null);
+            void client.invalidateQueries();
+            toast(`Overtime saved for ${empName} on ${dateLabel(dt)}.`);
+          }}
+        />
+      )}
+      {otDetails && (
+        <OvertimeDetailsModal
+          user={user}
+          employee={otDetails.employee}
+          workDate={otDetails.workDate}
+          record={otDetails.record}
+          canManage={p.canToggleOT && !self}
+          onClose={() => setOtDetails(null)}
+          onEdit={() => {
+            const rec = otDetails.record;
+            setOtModal({
+              open: true,
+              employeeId: otDetails.employee.employeeId,
+              workDate: otDetails.workDate,
+              regularHours: rec.regularMinutes
+                ? Number((rec.regularMinutes / 60).toFixed(2))
+                : undefined,
+              otHours: rec.otHours || 0,
+              otAmount:
+                rec.otAmount !== undefined
+                  ? major(rec.otAmount, user.company.currency)
+                  : undefined,
+              otRemark: rec.otRemark || "",
+            });
+            setOtDetails(null);
+          }}
+          onRemove={() => void removeOvertime(otDetails)}
+          removing={savingOt}
+        />
       )}
     </>
   );
@@ -595,6 +878,7 @@ export function AttendanceTable({
   user,
   onQuickMark,
   showDate = false,
+  onShowOt,
 }: {
   rows: AttendanceRow[];
   user: AuthUser;
@@ -604,6 +888,11 @@ export function AttendanceTable({
     hours?: number,
   ) => Promise<boolean>;
   showDate?: boolean;
+  onShowOt?: (
+    employee: AttendanceRow,
+    workDate: string,
+    record: AttendanceRow,
+  ) => void;
 }) {
   const pay =
     user.effectivePermissions.canViewSalaryImpact ||
@@ -667,9 +956,19 @@ export function AttendanceTable({
               {pay && (
                 <td data-label="Overtime">
                   {row.isOvertime && row.otAmount !== undefined ? (
-                    <span className="badge badge-overtime">
-                      {money(row.otAmount, user.company.currency)}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onShowOt?.(row, row.workDate, row)}
+                      className="badge badge-overtime cursor-pointer hover:opacity-80 transition inline-flex items-center gap-1 font-semibold"
+                      title="Click to view Overtime details"
+                    >
+                      <span>{money(row.otAmount, user.company.currency)}</span>
+                      {row.otHours ? (
+                        <span className="opacity-75 text-[10px]">
+                          ({row.otHours}h)
+                        </span>
+                      ) : null}
+                    </button>
                   ) : (
                     "—"
                   )}
@@ -680,169 +979,6 @@ export function AttendanceTable({
                   <QuickMark row={row} onMark={onQuickMark} />
                 </td>
               )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-function hoursLabel(minutes: number) {
-  const hours = Math.round((minutes / 60) * 10) / 10;
-  return Number.isInteger(hours) ? String(hours) : hours.toFixed(1);
-}
-function RegisterGrid({
-  rows,
-  days,
-  records,
-  today,
-  canMark,
-  busyCell,
-  onCycle,
-}: {
-  rows: AttendanceRow[];
-  days: string[];
-  records: Map<string, AttendanceRow>;
-  today: string;
-  canMark: boolean;
-  busyCell: string;
-  onCycle: (employee: AttendanceRow, workDate: string) => void;
-}) {
-  const totals = new Map<string, { present: number; minutes: number }>();
-  for (const employee of rows) {
-    let present = 0,
-      minutes = 0;
-    for (const day of days) {
-      const record = records.get(`${employee.employeeId}|${day}`);
-      if (!record) continue;
-      if (record.status === "PRESENT") present += 1;
-      minutes +=
-        record.regularMinutes || Math.round((record.totalHours || 0) * 60);
-    }
-    totals.set(employee.employeeId, { present, minutes });
-  }
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th className="sticky left-0 z-[2] w-[180px] min-w-[180px] bg-[#fafbf9]">
-              Employee
-            </th>
-            {days.map((day) => {
-              const current = DateTime.fromISO(day);
-              return (
-                <th
-                  key={day}
-                  className={`w-[38px] min-w-[38px] px-0 py-[7px] text-center ${
-                    current.weekday > 5 ? "bg-[#f3f5f2]" : ""
-                  }`}
-                >
-                  <div className="text-[11px] font-semibold">{current.day}</div>
-                  <div className="text-[8px] font-normal tracking-normal text-[#9aa49b]">
-                    {current.toFormat("ccc")}
-                  </div>
-                </th>
-              );
-            })}
-            <th aria-hidden className="p-0" />
-            <th className="sticky right-0 z-[2] w-[92px] min-w-[92px] bg-[#fafbf9] px-[10px] text-center">
-              Total
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((employee, index) => (
-            <tr key={employee.employeeId}>
-              <td className="sticky left-0 z-[1] w-[180px] min-w-[180px] bg-white">
-                <div className="person">
-                  <Avatar name={employee.employeeName} index={index} />
-                  <div>
-                    <strong>{employee.employeeName}</strong>
-                    <small>{employee.employeeCode}</small>
-                  </div>
-                </div>
-              </td>
-              {days.map((day) => {
-                const key = `${employee.employeeId}|${day}`,
-                  record = records.get(key),
-                  status = record?.status,
-                  future = day > today,
-                  present = status === "PRESENT",
-                  absent = status === "ABSENT",
-                  mark = present
-                    ? "P"
-                    : absent
-                      ? "A"
-                      : status === "HALF_DAY"
-                        ? "½"
-                        : status === "LEAVE"
-                          ? "L"
-                          : status === "HOLIDAY"
-                            ? "H"
-                            : "–",
-                  hoursMissing =
-                    present &&
-                    employee.payType === "HOURLY" &&
-                    !record?.regularMinutes;
-                return (
-                  <td key={day} className="px-[3px] py-[4px] text-center">
-                    <button
-                      type="button"
-                      disabled={!canMark || future || busyCell === key}
-                      aria-label={`${employee.employeeName} · ${dateLabel(day)} · ${status ? label(status) : "Unmarked"}`}
-                      title={`${dateLabel(day)} · ${status ? label(status) : "Unmarked"}${hoursMissing ? " · hours missing" : ""}`}
-                      onClick={() => onCycle(employee, day)}
-                      className={`relative mx-auto grid size-[34px] place-items-center rounded-[7px] border text-[11px] font-extrabold transition ${
-                        future
-                          ? "cursor-not-allowed border-transparent text-[#cfd6cf]"
-                          : present
-                            ? "border-ok bg-ok text-white shadow-sm hover:opacity-90"
-                            : absent
-                              ? "border-bad bg-bad text-white shadow-sm hover:opacity-90"
-                              : status
-                                ? "border-warn/40 bg-warn/10 text-warn hover:opacity-90"
-                                : "border-transparent text-[#b9c2ba] hover:border-ok-soft hover:bg-ok-soft hover:text-ok"
-                      }`}
-                    >
-                      {mark}
-                      {hoursMissing && (
-                        <span className="absolute right-[3px] top-[3px] size-[5px] rounded-full bg-white ring-1 ring-warn" />
-                      )}
-                    </button>
-                  </td>
-                );
-              })}
-              <td aria-hidden className="p-0" />
-              <td className="sticky right-0 z-[1] w-[92px] min-w-[92px] bg-white px-[10px] text-center">
-                {employee.payType === "HOURLY" ? (
-                  <div
-                    className="text-[11px] font-semibold text-[#33413a]"
-                    title="Total hours worked in this view"
-                  >
-                    {hoursLabel(totals.get(employee.employeeId)?.minutes || 0)}{" "}
-                    h
-                  </div>
-                ) : (
-                  <>
-                    <div
-                      className="text-[11px] font-semibold text-ok"
-                      title="Present days in this view"
-                    >
-                      {totals.get(employee.employeeId)?.present || 0} d
-                    </div>
-                    <div
-                      className="text-[9px] text-[#8b958e]"
-                      title="Approved or worked hours in this view"
-                    >
-                      {hoursLabel(
-                        totals.get(employee.employeeId)?.minutes || 0,
-                      )}{" "}
-                      h
-                    </div>
-                  </>
-                )}
-              </td>
             </tr>
           ))}
         </tbody>
@@ -863,13 +999,16 @@ function QuickMark({
 }) {
   const [open, setOpen] = useState(false),
     [hours, setHours] = useState(""),
-    [busy, setBusy] = useState(false);
+    [saving, setSaving] = useState<"PRESENT" | "ABSENT" | "hours" | null>(
+      null,
+    );
+  const busy = saving !== null;
   const hourly = row.payType === "HOURLY",
     day = dateLabel(row.workDate);
   async function mark(status: "PRESENT" | "ABSENT", worked?: number) {
-    setBusy(true);
+    setSaving(open ? "hours" : status);
     const saved = await onMark(row, status, worked);
-    setBusy(false);
+    setSaving(null);
     if (saved) setOpen(false);
   }
   if (open)
@@ -888,9 +1027,8 @@ function QuickMark({
           if (Number.isFinite(value) && value > 0) await mark("PRESENT", value);
         }}
       >
-        <input
+        <NumberInput
           aria-label={`Hours worked by ${row.employeeName} on ${day}`}
-          type="number"
           min="0.25"
           max={row.standardDailyHours || 8}
           step="0.25"
@@ -905,9 +1043,14 @@ function QuickMark({
           title={`Save hours for ${row.employeeName}`}
           className="grid size-[32px] place-items-center rounded-[8px] border border-ok bg-ok text-white shadow-sm hover:border-ok"
           disabled={busy}
+          aria-busy={saving === "hours"}
           aria-label={`Save hours for ${row.employeeName}`}
         >
-          <Check size={15} />
+          {saving === "hours" ? (
+            <Loader2 size={15} className="spin" aria-hidden="true" />
+          ) : (
+            <Check size={15} />
+          )}
         </button>
         <button
           type="button"
@@ -926,6 +1069,7 @@ function QuickMark({
         title={`Mark ${row.employeeName} absent`}
         aria-label={`Mark ${row.employeeName} absent on ${day}`}
         aria-pressed={row.status === "ABSENT"}
+        aria-busy={saving === "ABSENT"}
         disabled={busy || row.status === "ABSENT"}
         className={`grid size-[32px] place-items-center rounded-[8px] border text-[12px] font-extrabold transition ${
           row.status === "ABSENT"
@@ -934,13 +1078,18 @@ function QuickMark({
         }`}
         onClick={() => void mark("ABSENT")}
       >
-        A
+        {saving === "ABSENT" ? (
+          <Loader2 size={15} className="spin" aria-hidden="true" />
+        ) : (
+          "A"
+        )}
       </button>
       <button
         type="button"
         title={`Mark ${row.employeeName} present`}
         aria-label={`Mark ${row.employeeName} present on ${day}`}
         aria-pressed={row.status === "PRESENT"}
+        aria-busy={saving === "PRESENT"}
         disabled={busy || row.status === "PRESENT"}
         className={`grid size-[32px] place-items-center rounded-[8px] border text-[12px] font-extrabold transition ${
           row.status === "PRESENT"
@@ -949,7 +1098,11 @@ function QuickMark({
         }`}
         onClick={() => void mark("PRESENT")}
       >
-        P
+        {saving === "PRESENT" ? (
+          <Loader2 size={15} className="spin" aria-hidden="true" />
+        ) : (
+          "P"
+        )}
       </button>
       {hourly && (
         <button
@@ -1085,5 +1238,386 @@ function PunchCard({ user }: { user: AuthUser }) {
         </div>
       </div>
     </section>
+  );
+}
+
+function OvertimeModal({
+  user,
+  employees,
+  initialData,
+  records,
+  onClose,
+  onSuccess,
+}: {
+  user: AuthUser;
+  employees: AttendanceRow[];
+  initialData: {
+    employeeId?: string;
+    workDate?: string;
+    regularHours?: number;
+    otHours?: number;
+    otAmount?: number;
+    otRemark?: string;
+  };
+  records: Map<string, AttendanceRow>;
+  onClose: () => void;
+  onSuccess: (empName: string, date: string) => void;
+}) {
+  const [empId, setEmpId] = useState(
+    initialData.employeeId || employees[0]?.employeeId || "",
+  );
+  const today = dateNow(user.company.timezone);
+  const [workDate, setWorkDate] = useState(initialData.workDate || today);
+  const selectedEmp = employees.find((e) => e.employeeId === empId);
+  const isHourly = selectedEmp?.payType === "HOURLY";
+  const existingRecord = records.get(`${empId}|${workDate}`);
+  const [workingHours, setWorkingHours] = useState(
+    initialData.regularHours !== undefined
+      ? String(initialData.regularHours)
+      : existingRecord?.regularMinutes
+        ? String(Number((existingRecord.regularMinutes / 60).toFixed(2)))
+        : isHourly
+          ? String(selectedEmp?.standardDailyHours || 8)
+          : "",
+  );
+  const [hours, setHours] = useState(
+    initialData.otHours !== undefined && initialData.otHours > 0
+      ? String(initialData.otHours)
+      : "1",
+  );
+  const [amount, setAmount] = useState(
+    initialData.otAmount !== undefined && initialData.otAmount > 0
+      ? String(initialData.otAmount)
+      : "",
+  );
+  const [remark, setRemark] = useState(initialData.otRemark || "");
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  const options = employees.map((e) => ({
+    value: e.employeeId,
+    label: `${e.employeeName} (${e.employeeCode})${e.payType === "HOURLY" ? " · Hourly" : ""}`,
+  }));
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!empId) {
+      toast("Please select an employee.", true);
+      return;
+    }
+    if (!workDate) {
+      toast("Please select a date.", true);
+      return;
+    }
+    const numHours = Number(hours.trim());
+    if (!Number.isFinite(numHours) || numHours <= 0 || numHours > 24) {
+      toast("Please enter valid OT hours (0.25 to 24).", true);
+      return;
+    }
+    const amountStr = amount.trim();
+    const numAmount = Number(amountStr);
+    if (!Number.isFinite(numAmount) || numAmount <= 0) {
+      toast("Please enter a positive OT amount.", true);
+      return;
+    }
+    const parsedWorkingHours = Number(workingHours.trim());
+    if (isHourly && workingHours.trim()) {
+      if (
+        !Number.isFinite(parsedWorkingHours) ||
+        parsedWorkingHours < 0 ||
+        parsedWorkingHours > 24
+      ) {
+        toast("Please enter valid regular working hours (0 to 24).", true);
+        return;
+      }
+    }
+
+    setBusy(true);
+    try {
+      const existing = records.get(`${empId}|${workDate}`);
+      let version = existing?.version;
+      if (version === undefined) {
+        try {
+          const check = await api<AttendanceRow[]>(
+            `/attendance?from=${workDate}&to=${workDate}&employeeId=${empId}`,
+          );
+          const match = check.data?.find(
+            (r) => r.workDate === workDate && r.employeeId === empId,
+          );
+          version = match?.version || 0;
+        } catch {
+          version = 0;
+        }
+      }
+      const status =
+        existing?.status && ["PRESENT", "HALF_DAY"].includes(existing.status)
+          ? existing.status
+          : "PRESENT";
+      const amountMinor = minor(amountStr, user.company.currency);
+      const otRemarkText = remark.trim() || `Overtime: ${numHours} hrs`;
+      const body: Record<string, unknown> = {
+        status,
+        ...(isHourly && workingHours.trim() && parsedWorkingHours >= 0
+          ? { regularMinutes: Math.round(parsedWorkingHours * 60) }
+          : {}),
+        isOvertime: true,
+        otHours: numHours,
+        otAmount: amountMinor,
+        otRemark: otRemarkText,
+        modificationReason: `Overtime recorded: ${numHours} hrs (${money(amountMinor, user.company.currency)})${isHourly && workingHours.trim() ? ` · Regular: ${parsedWorkingHours} hrs` : ""}`,
+        version,
+      };
+
+      await mutate(`/attendance/${empId}/${workDate}`, "PUT", body);
+      const emp = employees.find((e) => e.employeeId === empId);
+      onSuccess(emp?.employeeName || "Employee", workDate);
+    } catch (err) {
+      toast((err as Error).message, true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title="Add Overtime"
+      description="Record overtime hours and direct compensation for an employee."
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+    >
+      <form onSubmit={handleSubmit}>
+        <div className="form-body">
+          <Field
+            label="Employee"
+            hint="Select the employee for this overtime entry"
+          >
+            <Select
+              ariaLabel="Select employee"
+              value={empId}
+              onChange={(newEmpId) => {
+                setEmpId(newEmpId);
+                const emp = employees.find((e) => e.employeeId === newEmpId);
+                if (emp?.payType === "HOURLY") {
+                  const rec = records.get(`${newEmpId}|${workDate}`);
+                  setWorkingHours(
+                    rec?.regularMinutes
+                      ? String(Number((rec.regularMinutes / 60).toFixed(2)))
+                      : String(emp.standardDailyHours || 8),
+                  );
+                } else {
+                  setWorkingHours("");
+                }
+              }}
+              options={options}
+            />
+          </Field>
+          <Field label="Work date" hint="Date when overtime was worked">
+            <input
+              type="date"
+              max={today}
+              value={workDate}
+              onChange={(e) => {
+                const newDate = e.target.value;
+                setWorkDate(newDate);
+                if (isHourly) {
+                  const rec = records.get(`${empId}|${newDate}`);
+                  if (rec?.regularMinutes) {
+                    setWorkingHours(
+                      String(Number((rec.regularMinutes / 60).toFixed(2))),
+                    );
+                  }
+                }
+              }}
+              required
+            />
+          </Field>
+          {isHourly && (
+            <Field
+              label="Regular Working Hours"
+              hint={`Daily shift hours (standard shift: ${selectedEmp?.standardDailyHours || 8} hrs)`}
+            >
+              <NumberInput
+                step="0.25"
+                min="0"
+                max={selectedEmp?.standardDailyHours || 8}
+                value={workingHours}
+                onChange={(e) => setWorkingHours(e.target.value)}
+                placeholder={`e.g. ${selectedEmp?.standardDailyHours || 8}`}
+              />
+            </Field>
+          )}
+          <Field
+            label="OT Hours"
+            hint="Number of overtime hours (e.g. 1, 2, 2.5)"
+          >
+            <NumberInput
+              step="0.25"
+              min="0.25"
+              max="24"
+              value={hours}
+              onChange={(e) => setHours(e.target.value)}
+              placeholder="e.g. 2"
+              required
+            />
+          </Field>
+          <Field
+            label={`OT Amount (${user.company.currency})`}
+            hint={`Direct compensation amount in ${user.company.currency}`}
+          >
+            <NumberInput
+              step="1"
+              min="1"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="e.g. 500"
+              required
+            />
+          </Field>
+          <Field
+            label="Remark"
+            hint="Optional note or reason (defaults to Overtime hours)"
+          >
+            <input
+              type="text"
+              value={remark}
+              onChange={(e) => setRemark(e.target.value)}
+              placeholder={`e.g. Overtime: ${hours || "2"} hrs`}
+            />
+          </Field>
+        </div>
+        <div className="form-actions">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={busy}
+            onClick={onClose}
+          >
+            Cancel
+          </Button>
+          <Button busy={busy}>
+            <Check size={15} />
+            Save Overtime
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function OvertimeDetailsModal({
+  user,
+  employee,
+  workDate,
+  record,
+  canManage,
+  onClose,
+  onEdit,
+  onRemove,
+  removing,
+}: {
+  user: AuthUser;
+  employee: AttendanceRow;
+  workDate: string;
+  record: AttendanceRow;
+  canManage: boolean;
+  onClose: () => void;
+  onEdit: () => void;
+  onRemove: () => void;
+  removing: boolean;
+}) {
+  return (
+    <Modal
+      title="Overtime Details"
+      description={`${employee.employeeName} (${employee.employeeCode}) · ${dateLabel(workDate)}`}
+      onClose={onClose}
+    >
+      <div className="form-body">
+        <div className="rounded-lg border border-line bg-[#fafbf9] p-4 text-[13px] space-y-3">
+          <div className="flex justify-between items-center py-1 border-b border-line/60">
+            <span className="text-[#64746b]">Employee:</span>
+            <span className="font-semibold text-[#1f2923]">
+              {employee.employeeName} ({employee.employeeCode})
+            </span>
+          </div>
+          <div className="flex justify-between items-center py-1 border-b border-line/60">
+            <span className="text-[#64746b]">Date:</span>
+            <span className="font-medium text-[#1f2923]">
+              {dateLabel(workDate)}
+            </span>
+          </div>
+          <div className="flex justify-between items-center py-1 border-b border-line/60">
+            <span className="text-[#64746b]">Attendance Status:</span>
+            <Badge status={record.status} />
+          </div>
+          {employee.payType === "HOURLY" && (
+            <>
+              <div className="flex justify-between items-center py-1 border-b border-line/60">
+                <span className="text-[#64746b]">Regular Working Hours:</span>
+                <span className="font-semibold text-[#1f2923]">
+                  {record.regularMinutes
+                    ? `${(record.regularMinutes / 60).toFixed(1)} hrs`
+                    : "0 hrs"}
+                </span>
+              </div>
+              <div className="flex justify-between items-center py-1 border-b border-line/60">
+                <span className="text-[#64746b]">
+                  Total Hours (Regular + OT):
+                </span>
+                <span className="font-bold text-[#1f2923]">
+                  {(
+                    ((record.regularMinutes || 0) +
+                      (record.otHours ? record.otHours * 60 : 0)) /
+                    60
+                  ).toFixed(1)}{" "}
+                  hrs
+                </span>
+              </div>
+            </>
+          )}
+          <div className="flex justify-between items-center py-1 border-b border-line/60">
+            <span className="text-[#64746b]">OT Hours:</span>
+            <span className="font-bold text-ok text-[14px]">
+              {record.otHours || 0} hrs
+            </span>
+          </div>
+          <div className="flex justify-between items-center py-1 border-b border-line/60">
+            <span className="text-[#64746b]">OT Amount:</span>
+            <span className="font-bold text-amber-600 text-[14px]">
+              {record.otAmount !== undefined
+                ? money(record.otAmount, user.company.currency)
+                : "—"}
+            </span>
+          </div>
+          <div className="flex justify-between items-start py-1">
+            <span className="text-[#64746b]">Remark:</span>
+            <span className="font-normal text-[#33413a] text-right max-w-[240px]">
+              {record.otRemark || "None"}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="form-actions">
+        {canManage && (
+          <div className="mr-auto flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="text-danger"
+              busy={removing}
+              onClick={onRemove}
+            >
+              Remove OT
+            </Button>
+            <Button type="button" variant="primary" onClick={onEdit}>
+              Edit OT
+            </Button>
+          </div>
+        )}
+        <Button type="button" variant="secondary" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+    </Modal>
   );
 }

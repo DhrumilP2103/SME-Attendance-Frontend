@@ -139,6 +139,16 @@
     @apply min-h-[16px] w-[16px] accent-green;
   }
 
+  input[type="number"] {
+    appearance: textfield;
+  }
+
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
   input[type="date"],
   input[type="month"],
   input[type="time"] {
@@ -618,6 +628,15 @@
   }
   .toolbar-spacer {
     @apply flex-1;
+  }
+  .report-dates {
+    @apply grid grid-cols-2 gap-2;
+  }
+  .report-dates label {
+    @apply grid min-w-0 gap-1 text-[10px] text-muted;
+  }
+  .report-dates input {
+    @apply min-h-[37px] min-w-0 px-2 py-2 text-[11px];
   }
 
   .table-wrap {
@@ -1100,7 +1119,7 @@
     @apply max-w-[280px] text-[11px] leading-[1.7];
   }
   .heading-actions {
-    @apply gap-[7px];
+    @apply max-w-full flex-wrap gap-[7px];
   }
   .heading-actions .btn {
     @apply text-[11px];
@@ -1161,10 +1180,10 @@
     @apply h-[190px];
   }
   .donut-area {
-    @apply gap-10 px-5 pb-6;
+    @apply flex-wrap gap-4 px-4 pb-6;
   }
   .donut {
-    @apply size-[150px];
+    @apply size-[125px] shrink-0;
   }
   .donut-legend {
     @apply w-[115px] gap-[19px];
@@ -1188,6 +1207,27 @@
   .toolbar > [data-select],
   .toolbar > input {
     @apply min-w-0 flex-1;
+  }
+  .report-toolbar > [data-select],
+  .report-toolbar > input,
+  .report-dates {
+    @apply w-full basis-full;
+  }
+  .report-toolbar > .toolbar-spacer {
+    @apply hidden;
+  }
+  .report-toolbar > small {
+    @apply w-full;
+  }
+  .attendance-register .register-employee {
+    @apply w-[120px] min-w-[120px] max-w-[120px] px-2 whitespace-normal;
+  }
+  .attendance-register .register-employee .person {
+    @apply gap-1.5;
+    overflow-wrap: anywhere;
+  }
+  .attendance-register .register-total {
+    @apply static;
   }
   .table-mobile thead {
     @apply hidden;
@@ -1240,7 +1280,7 @@
     @apply py-5 pr-[60px] pl-5;
   }
   .form-actions {
-    @apply px-5 py-[15px];
+    @apply flex-wrap px-5 py-[15px];
   }
   .modal {
     @apply max-h-[92vh];

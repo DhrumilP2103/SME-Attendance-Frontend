@@ -2,6 +2,7 @@
 import {
   QueryClient,
   QueryClientProvider,
+  useIsFetching,
   useQuery,
 } from "@tanstack/react-query";
 import {
@@ -12,7 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { CheckCircle2, X, AlertCircle } from "lucide-react";
+import { CheckCircle2, X, AlertCircle, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { AuthUser } from "@/types";
 
@@ -38,6 +39,20 @@ export function useData<T>(path: string, enabled = true) {
     staleTime: 15000,
   });
 }
+function QueryLoadingIndicator() {
+  const fetching = useIsFetching();
+  if (!fetching) return null;
+  return (
+    <div
+      role="status"
+      className="pointer-events-none fixed top-4 right-4 z-100 flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink shadow-sm"
+    >
+      <Loader2 size={16} className="spin" aria-hidden="true" />
+      Loading data…
+    </div>
+  );
+}
+
 export default function Providers({ children }: { children: ReactNode }) {
   const [client] = useState(
     () =>
@@ -62,6 +77,7 @@ export default function Providers({ children }: { children: ReactNode }) {
   }, [toast]);
   return (
     <QueryClientProvider client={client}>
+      <QueryLoadingIndicator />
       <ToastContext.Provider value={notify}>
         {children}
         {toast && (

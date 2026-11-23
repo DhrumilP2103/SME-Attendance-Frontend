@@ -7,7 +7,6 @@ import {
   Clock3,
   ArrowUpRight,
   ArrowRight,
-  Download,
   Plus,
   CalendarDays,
   CircleCheck,
@@ -20,23 +19,22 @@ import {
   LogOut,
   Timer,
 } from "lucide-react";
-import { useData, useToast } from "@/app/providers";
+import { useData } from "@/app/providers";
 import {
   Avatar,
   Badge,
-  Button,
   Empty,
   ErrorState,
   Loading,
   PageHeading,
 } from "@/components/ui";
 import { dateLabel, time, money } from "@/lib/format";
-import { download } from "@/lib/api";
+import { queryString } from "@/lib/api";
+import { ReportExport } from "@/features/reports/report-export";
 import type { AuthUser, DashboardData } from "@/types";
 
 export default function Dashboard({ user }: { user: AuthUser }) {
-  const query = useData<DashboardData>("/dashboard/summary"),
-    toast = useToast();
+  const query = useData<DashboardData>("/dashboard/summary");
   if (query.isPending) return <Loading />;
   if (query.error)
     return <ErrorState error={query.error} retry={() => query.refetch()} />;
@@ -154,18 +152,12 @@ export default function Dashboard({ user }: { user: AuthUser }) {
         description="A little clarity for a more productive day."
       >
         {p.canExportReports && p.canGenerateReports && (
-          <Button
+          <ReportExport
             variant="secondary"
-            onClick={() =>
-              download(
-                `/reports/attendance/export?from=${d.date}&to=${d.date}&format=csv`,
-                `Attendance_${d.date}.csv`,
-              ).catch((e) => toast(e.message, true))
-            }
-          >
-            <Download size={14} />
-            Export report
-          </Button>
+            endpoint="/reports/attendance/export"
+            filters={queryString({ from: d.date, to: d.date })}
+            filename={`Attendance_${d.date}`}
+          />
         )}
         {p.canMarkTeamAttendance && (
           <Link className="btn btn-primary" href="/attendance">

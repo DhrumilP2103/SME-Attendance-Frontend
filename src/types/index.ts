@@ -64,6 +64,7 @@ export interface AttendanceRow {
   regularApproved: boolean;
   isIncomplete: boolean;
   isOvertime: boolean;
+  otHours?: number;
   otAmount?: number;
   otRemark?: string;
   version: number;

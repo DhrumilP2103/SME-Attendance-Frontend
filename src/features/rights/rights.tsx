@@ -34,7 +34,7 @@ const descriptions: Record<Permission, [string, string]> = {
   canToggleOT: ["Manage overtime", "Approve OT amounts and remarks"],
   canViewAllAttendance: ["All attendance", "View the company-wide register"],
   canGenerateReports: ["Generate reports", "Create scoped attendance reports"],
-  canExportReports: ["Export reports", "Download CSV, Excel, and PDF"],
+  canExportReports: ["Export reports", "Download Excel and PDF"],
   canViewSalaryImpact: [
     "Salary information",
     "View compensation and payroll impact",

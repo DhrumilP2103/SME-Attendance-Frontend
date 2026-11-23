@@ -315,6 +315,7 @@ export default function Workspace() {
                 ? nav.length - 1
                 : nav.findIndex((n) => n.href.startsWith("/settings")),
             )
+            .filter((item) => item.href !== "/payroll")
             .map((item) => (
               <Link
                 key={item.href}

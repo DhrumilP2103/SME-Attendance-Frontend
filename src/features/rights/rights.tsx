@@ -1,4 +1,5 @@
 "use client";
+import { showSalaryInformation } from "@/lib/features";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -76,7 +77,7 @@ export default function Rights() {
       <Notice>
         <ShieldCheck size={15} style={{ display: "inline" }} /> Fixed
         permissions protect your workspace. Employees can only view their own
-        attendance and payroll records.
+        attendance{showSalaryInformation ? " and payroll" : ""} records.
       </Notice>
       <div className="tabs">
         <button
@@ -116,7 +117,8 @@ export default function Rights() {
                     DisplayedPermission,
                     [string, string],
                   ][]
-                ).map(([key, [name, description]]) => (
+                ).filter(([key]) => showSalaryInformation || key !== "canViewSalaryImpact")
+                  .map(([key, [name, description]]) => (
                   <tr key={key}>
                     <td>
                       <strong>{name}</strong>
@@ -243,6 +245,7 @@ export default function Rights() {
               immediately.
             </Notice>
             {(Object.keys(descriptions) as DisplayedPermission[])
+              .filter((key) => showSalaryInformation || key !== "canViewSalaryImpact")
               .filter((key) =>
                 policies.data?.data
                   .find((p) => p.role === selected.role)

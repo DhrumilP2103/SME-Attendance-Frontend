@@ -1,4 +1,5 @@
 "use client";
+import { showSalaryInformation } from "@/lib/features";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
@@ -61,7 +62,7 @@ export default function Employees({
     `/employees/${employeeId}`,
     Boolean(employeeId && employeeId !== "new"),
   );
-  const canPay = user.effectivePermissions.canViewSalaryImpact,
+  const canPay = showSalaryInformation && user.effectivePermissions.canViewSalaryImpact,
     isOwn = (employee: Employee) => employee._id === user.employeeId;
   async function confirmDelete() {
     if (!pendingDelete) return;
@@ -215,7 +216,7 @@ export default function Employees({
                 <tr>
                   <th>Employee</th>
                   <th>Joining date</th>
-                  <th>Pay type</th>
+                  <th>{showSalaryInformation ? "Pay type" : "Attendance type"}</th>
                   <th>Status</th>
                   <th />
                 </tr>
@@ -254,8 +255,8 @@ export default function Employees({
                     <td data-label="Joined">
                       {dateLabel(employee.joiningDate)}
                     </td>
-                    <td data-label="Pay type">
-                      {employee.payType === "SALARIED" ? "Salaried" : "Hourly"}
+                    <td data-label={showSalaryInformation ? "Pay type" : "Attendance type"}>
+                      {employee.payType === "SALARIED" ? (showSalaryInformation ? "Salaried" : "Day-based") : "Hourly"}
                       {canPay && (
                         <small style={{ display: "block" }}>
                           {money(
@@ -447,9 +448,11 @@ function EmployeeForm({
         body.version = employee.version;
         body.status = value("status");
       }
-      if (canPay)
+      if (canPay && (!employee || payType !== employee.payType || showSalaryInformation)) {
+        body.payType = payType;
+      }
+      if (canPay && showSalaryInformation)
         Object.assign(body, {
-          payType,
           baseSalary:
             payType === "SALARIED"
               ? minor(value("salary"), user.company.currency)
@@ -529,7 +532,9 @@ function EmployeeForm({
               <p className="text-[11px] text-muted" style={{ marginTop: 8 }}>
                 {accountType === "HR"
                   ? "HR account: full people-management access plus a linked employee profile."
-                  : "Employee account: self-service access, attendance and payroll only."}
+                  : showSalaryInformation
+                    ? "Employee account: self-service access, attendance and payroll only."
+                    : "Employee account: self-service access and attendance."}
               </p>
             </div>
           )}
@@ -686,22 +691,22 @@ function EmployeeForm({
             {canPay && (
               <>
                 <div className="form-section">
-                  Compensation · {user.company.currency}
+                  {showSalaryInformation ? `Compensation · ${user.company.currency}` : "Attendance"}
                 </div>
-                <Field label="Pay structure">
+                <Field label={showSalaryInformation ? "Pay structure" : "Attendance type"}>
                   <Select
-                    ariaLabel="Pay structure"
+                    ariaLabel={showSalaryInformation ? "Pay structure" : "Attendance type"}
                     value={payType}
                     onChange={(v) =>
                       setPayType(v as "SALARIED" | "HOURLY")
                     }
                     options={[
-                      { value: "SALARIED", label: "Monthly salary" },
-                      { value: "HOURLY", label: "Hourly rate" },
+                      { value: "SALARIED", label: showSalaryInformation ? "Monthly salary" : "Day-based" },
+                      { value: "HOURLY", label: showSalaryInformation ? "Hourly rate" : "Hourly" },
                     ]}
                   />
                 </Field>
-                {payType === "SALARIED" ? (
+                {showSalaryInformation && (payType === "SALARIED" ? (
                   <Field label="Base monthly salary">
                     <NumberInput
                       name="salary"
@@ -731,8 +736,8 @@ function EmployeeForm({
                       required
                     />
                   </Field>
-                )}
-                {payType === "SALARIED" && (
+                ))}
+                {showSalaryInformation && payType === "SALARIED" && (
                   <Field label="Salary divisor">
                     <Select
                       name="divisor"

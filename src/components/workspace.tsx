@@ -1,4 +1,5 @@
 "use client";
+import { showSalaryInformation } from "@/lib/features";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -123,7 +124,7 @@ export default function Workspace() {
       href: "/payroll",
       name: "Payroll",
       icon: Wallet,
-      allowed: !!user.employeeId || p.canViewSalaryImpact,
+      allowed: showSalaryInformation && (!!user.employeeId || p.canViewSalaryImpact),
     },
     {
       href: "/reports",
@@ -452,13 +453,15 @@ export default function Workspace() {
           <div className="form-body stack">
             <p>
               Use the attendance register to view or mark the day. Employee
-              profiles hold shift and pay settings. Reports bring your records
+              profiles hold shift{showSalaryInformation ? " and pay" : ""} settings. Reports bring your records
               together.
             </p>
-            <Notice>
-              Payroll figures are estimates until business policies are
-              confirmed. Only authorized roles can see compensation.
-            </Notice>
+            {showSalaryInformation && (
+              <Notice>
+                Payroll figures are estimates until business policies are
+                confirmed. Only authorized roles can see compensation.
+              </Notice>
+            )}
             {user.demoWorkspace && (
               <Notice>
                 You’re exploring local sample data. Changes persist in MongoDB.

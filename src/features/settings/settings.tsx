@@ -1,4 +1,5 @@
 "use client";
+import { showSalaryInformation } from "@/lib/features";
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
@@ -74,7 +75,9 @@ function CompanySettings({ user }: { user: AuthUser }) {
             </Field>
             <Field
               label="Currency"
-              hint="Currency is locked after employee compensation records exist."
+              hint={showSalaryInformation
+                ? "Currency is locked after employee compensation records exist."
+                : "Currency is used for overtime amounts."}
             >
               <Select
                 name="currency"
@@ -103,7 +106,7 @@ function CompanySettings({ user }: { user: AuthUser }) {
           <h2 style={{ marginTop: 15 }}>A secure foundation</h2>
           <p>
             Access is controlled by role permissions and account-level
-            overrides. All attendance and compensation changes are recorded for
+            overrides. Attendance{showSalaryInformation ? " and compensation" : ""} changes are recorded for
             accountability.
           </p>
           <Notice>
@@ -231,9 +234,10 @@ function EodForm({ config }: { config: EodConfig }) {
                     .split(/[\n,;]/)
                     .map((s) => s.trim())
                     .filter(Boolean),
-                  sections: Object.fromEntries(
-                    ["attendance", "salary"].map((key) => [key, form.has(key)]),
-                  ),
+                  sections: {
+                    attendance: form.has("attendance"),
+                    salary: showSalaryInformation ? form.has("salary") : config.sections.salary,
+                  },
                 });
                 await client.invalidateQueries();
                 toast("EOD schedule saved.");
@@ -311,7 +315,7 @@ function EodForm({ config }: { config: EodConfig }) {
                   "Salary Report",
                   "Month-to-date salary estimate for active employees.",
                 ],
-              ].map(([key, name, hint]) => (
+              ].filter(([key]) => showSalaryInformation || key !== "salary").map(([key, name, hint]) => (
                 <label className="check-label" key={key}>
                   <input
                     name={key}

@@ -1,4 +1,5 @@
 "use client";
+import { showSalaryInformation } from "@/lib/features";
 import { useEffect, useMemo, useState } from "react";
 import { DateTime } from "luxon";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
@@ -433,7 +434,9 @@ export default function Attendance({
             {missing.data.data.count === 1 ? "record is" : "records are"}{" "}
             missing hours.
           </strong>{" "}
-          Add the hours for previous days so payroll stays accurate.
+          {showSalaryInformation
+            ? "Add the hours for previous days so payroll stays accurate."
+            : "Add the hours for previous days to complete attendance records."}
           <div className="row" style={{ flexWrap: "wrap", marginTop: 8 }}>
             {missingDays.slice(0, 5).map((day) => (
               <button

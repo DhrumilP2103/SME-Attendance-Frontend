@@ -84,7 +84,7 @@ export default function Employees({
         title="Employees"
         description="Great teams start with knowing the people behind them."
       >
-        {canPay && (
+        {user.effectivePermissions.canViewSalaryImpact && (
           <Link className="btn btn-primary" href="/employees/new">
             <UserPlus size={15} />
             Add employee

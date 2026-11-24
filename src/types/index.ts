@@ -159,7 +159,7 @@ export interface EodConfig {
     attendance: boolean;
     salary: boolean;
   };
-  activityLogEmail: {
+  activityLogEmail?: {
     enabled: boolean;
     intervalMonths: number;
     lastSentAt?: string;

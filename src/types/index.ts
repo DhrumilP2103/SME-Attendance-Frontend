@@ -159,6 +159,12 @@ export interface EodConfig {
     attendance: boolean;
     salary: boolean;
   };
+  activityLogEmail: {
+    enabled: boolean;
+    intervalMonths: number;
+    lastSentAt?: string;
+    nextAttemptAt?: string;
+  };
   emailDelivery: string;
 }
 export interface EodRun {

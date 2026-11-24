@@ -172,6 +172,9 @@ function timezoneGroups(current: string) {
 }
 function EodForm({ config }: { config: EodConfig }) {
   const [enabled, setEnabled] = useState(config.isEnabled),
+    [activityLogEnabled, setActivityLogEnabled] = useState(
+      config.activityLogEmail.enabled,
+    ),
     [busy, setBusy] = useState(false),
     [sending, setSending] = useState(false),
     toast = useToast(),
@@ -238,6 +241,12 @@ function EodForm({ config }: { config: EodConfig }) {
                     attendance: form.has("attendance"),
                     salary: showSalaryInformation ? form.has("salary") : config.sections.salary,
                   },
+                  activityLogEmail: {
+                    enabled: activityLogEnabled,
+                    intervalMonths: Number(
+                      form.get("activityLogIntervalMonths"),
+                    ),
+                  },
                 });
                 await client.invalidateQueries();
                 toast("EOD schedule saved.");
@@ -297,6 +306,35 @@ function EodForm({ config }: { config: EodConfig }) {
                 name="recipients"
                 defaultValue={config.adminRecipients.join("\n")}
                 placeholder="admin@company.com"
+                required
+              />
+            </Field>
+            <label className="toggle-row" style={{ marginTop: 16 }}>
+              <div>
+                <h3>Email activity log</h3>
+                <p>
+                  Send all logged creations to the recipients above, then clear
+                  the log after successful delivery.
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                className="switch"
+                checked={activityLogEnabled}
+                onChange={(e) => setActivityLogEnabled(e.target.checked)}
+                aria-label="Enable activity log emails"
+              />
+            </label>
+            <Field
+              label="Send every (months)"
+              hint="Default: every 2 months. Choose any interval from 1 to 12 months."
+            >
+              <input
+                name="activityLogIntervalMonths"
+                type="number"
+                min={1}
+                max={12}
+                defaultValue={config.activityLogEmail.intervalMonths}
                 required
               />
             </Field>
